@@ -11,15 +11,6 @@
 //!     ffmpeg -framerate 30 -i frames/frame_%04d.png \
 //!            -c:v libx264 -pix_fmt yuv420p -crf 18 transient.mp4
 
-mod camera;
-mod hit;
-mod material;
-mod ray;
-mod scene;
-mod sphere;
-mod transient;
-mod vec3;
-
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -28,9 +19,11 @@ use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 
-use camera::Camera;
-use transient::{trace_path, Pulse, TransientFrame, C};
-use vec3::Vec3;
+use lux_aurumque::camera::Camera;
+use lux_aurumque::process::SpectralBudget;
+use lux_aurumque::scene;
+use lux_aurumque::transient::{trace_path, Pulse, TransientFrame, C};
+use lux_aurumque::vec3::Vec3;
 
 // ---- render parameters ------------------------------------------------------
 
@@ -38,10 +31,11 @@ const WIDTH:        usize = 640;
 const HEIGHT:       usize = 480;
 const SAMPLES:      u32   = 256;     // paths per pixel
 const MAX_DEPTH:    u32   = 8;
-const NUM_BINS:     usize = 200;     // how many time slices in the output video
-const DT:           f32   = 4.0e-11; // 40 ps/bin × 200 = 8 ns -> ~2.4 m path window
+const NUM_BINS:     usize = 475;     // 475 × 40 ps = 19.0 ns ≤ 3.00 · T_1 (19.01 ns) — admits the budget
+const DT:           f32   = 4.0e-11; // 40 ps/bin
 const PULSE_SIGMA:  f32   = 5.0e-11; // 50 ps pulse — fat enough to read clearly
 const TILE_SIZE:    usize = 64;      // render tile edge in pixels
+const SCENE_DIAM_M: f64   = 0.95;    // diam(Ω) for the Cornell-style room
 const FRAMES_DIR:   &str  = "frames";
 
 // ---- tone mapping for output -----------------------------------------------
@@ -65,6 +59,19 @@ fn tonemap_pixel(c: Vec3, exposure: f32) -> [u8; 3] {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Spectral-budget check: a closed scene has finite becoming, set by
+    // its lowest Dirichlet mode. We refuse to render past 3·T_1 — see
+    // NOTES_PROCESS.md §3 for the derivation.
+    let budget = SpectralBudget::for_scene_diameter(SCENE_DIAM_M, C as f64);
+    let render_horizon_secs = NUM_BINS as f64 * DT as f64;
+    budget.try_admit(render_horizon_secs)?;
+    eprintln!(
+        "Spectral budget admitted: horizon {:.2} ns ≤ {:.2}·T_1 ({:.2} ns)",
+        render_horizon_secs * 1e9,
+        budget.ring_down_factor,
+        budget.ring_down_factor * budget.principal_period * 1e9,
+    );
+
     std::fs::create_dir_all(FRAMES_DIR)?;
 
     eprintln!("Building scene...");

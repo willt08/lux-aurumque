@@ -118,11 +118,16 @@ N_{\text{bins}} \cdot \Delta t \;\gtrsim\; 3\, T_1.
 $$
 
 The factor of 3 captures the first three rings of the lowest mode, after
-which higher-mode interference is the only structure remaining. At the
-defaults ($N_{\text{bins}} = 200$, $\Delta t = 40$ ps, total $8$ ns) we
-capture $\approx 1.25\, T_1$ — enough to see the wavefront establish but
-not its ring-down. Doubling $N_{\text{bins}}$ to $400$ would sit comfortably
-above the $3\, T_1$ threshold for the present scene.
+which higher-mode interference is the only structure remaining. With
+$c = 2.998 \times 10^8$ m/s and the present scene's diameter
+$\approx 0.95$ m, the principal period is $T_1 \approx 6.34$ ns and the
+ceiling is $3\, T_1 \approx 19.0$ ns. The v0.1.0 defaults
+($N_{\text{bins}} = 200$, $\Delta t = 40$ ps, total $8$ ns) captured only
+$\approx 1.26\, T_1$ — enough to see the wavefront establish but not its
+ring-down. The v0.2.0 defaults ($N_{\text{bins}} = 475$, $\Delta t = 40$ ps,
+total $19.0$ ns $\le 3.00\, T_1$) sit at the threshold and admit the
+spectral budget exactly; smaller scenes use proportionally fewer bins,
+larger scenes proportionally more.
 
 Light is electromagnetic and incoherent in path tracing, so the literal
 Helmholtz problem differs from the scalar Dirichlet idealisation above.
@@ -151,10 +156,42 @@ determinate fact, frame by 40 ps. What perishes is the path; what endures —
 because the public world preserves all that is determinate (PR I.III) — is
 the wavefront.
 
+## 5. From metaphysics to API surface
+
+In v0.2.0 the abstractions developed above are named in the type system,
+in `src/process.rs`:
+
+- **`Occasion`** (§1) — the basic unit. `Ray` implements it: its datum is
+  its direction; its satisfaction (the cumulative `path_length` at the
+  terminal emissive hit) is recorded by the `trace_path` loop, not on the
+  ray itself.
+- **`Society`** (§1) — the personally ordered nexus. `Path` implements
+  it: its members are the segments; its `diameter()` reads the final
+  segment's `path_length`, the quantity bounded by the budget.
+- **`PublicWorld`** (§1) — the append-only objectification. `TransientFrame`
+  implements it: each `Deposit` is a perished occasion's contribution.
+- **`Concrescence`** (§2) — the hyperedge. Degenerate in the renderer
+  (one antecedent per scatter); the example `examples/receptacle.rs`
+  exercises the non-degenerate case in the vision-API setting.
+- **`SpectralBudget`** (§3) — the bound on becoming, exported as both
+  `try_admit(diameter) -> Result<(), BudgetError>` and `admits(d) -> bool`.
+  At startup the renderer checks `NUM_BINS · DT ≤ 3 · T_1`; the default
+  parameters of v0.2.0 satisfy this with a small margin.
+
+The translation of `template.ts` in `examples/receptacle.rs` exhibits
+the same five abstractions in a context where the principal period is
+not seconds-of-light-travel but tokens-of-context. The renderer's bound
+becomes a runaway-API guard: a vision request whose token budget exceeds
+`3 · T_1(context_window)` is refused before the model is called. *That
+which is above is like that which is below.*
+
 ## References
 
 - Whitehead, A. N. *Process and Reality*. Corrected edition (Griffin &
   Sherburne, eds.). Free Press, 1978. Cited as **PR** with part-section.
+- Plato. *Timaeus*. Trans. Donald J. Zeyl. Hackett, 2000. — 49a–52d for
+  the **receptacle** (χώρα), the third nature alongside Being and
+  Becoming, after which `examples/receptacle.rs` is named.
 - Goral, C. M.; Torrance, K. E.; Greenberg, D. P.; Battaile, B. *Modeling the
   interaction of light between diffuse surfaces.* SIGGRAPH 1984. — the
   original radiosity formulation as a finite hypergraph operator.

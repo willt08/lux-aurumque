@@ -154,6 +154,25 @@ the name of clarity:
 - Jarabo's PhD thesis, *Femto-Photography: Visualizing Light in Motion*,
   2015 — the most readable single document on the subject.
 
+## Library API (v0.2.0)
+
+`lux-aurumque` is also a library. The renderer's process-philosophical
+spine is exposed as a small set of traits — `Occasion`, `Society`,
+`Concrescence`, `PublicWorld`, `SpectralBudget` — over which downstream
+crates can implement their own kinds of flux and inherit the same
+coherence guarantees. The most important of these is the spectral-budget
+bound on becoming, which catches *runaway* token growth in a vision API
+the same way it catches an over-long render horizon here.
+
+The runnable blueprint at [`examples/receptacle.rs`](examples/receptacle.rs)
+ports Plato's χώρα — the receptacle that takes on Forms without being
+them — to a vision-API substrate, with the same `SpectralBudget` enforcing
+the token-window bound at the *natural*-necessity tier. Run with
+`cargo run --example receptacle`.
+
+The metaphysical justification of these traits is in
+[`NOTES_PROCESS.md`](NOTES_PROCESS.md).
+
 ## On what is rendered
 
 What the renderer is *computing* — beyond the pixel-side description above —
@@ -162,10 +181,11 @@ the path-traced society of occasions in the sense of Whitehead's
 *Process and Reality*, the radiosity operator as a continuous hypergraph,
 and the Dirichlet spectrum of the scene as the bound on its becoming. That
 last point yields a concrete heuristic: `NUM_BINS · DT ≳ 3 T_1`, where
-`T_1 ≈ 2 · diam(Ω) / c` is the period of the room's lowest mode.
-For the default scene `T_1 ≈ 6.4 ns`; the defaults sit at `1.25 T_1`,
-so doubling `NUM_BINS` is the principled move when fidelity to the
-ring-down matters.
+`T_1 ≈ 2 · diam(Ω) / c` is the period of the room's lowest mode. For
+the default scene `T_1 ≈ 6.34 ns`; the v0.2.0 defaults
+(`NUM_BINS = 475`, `DT = 40 ps`, total `19.0 ns ≤ 3.00 T_1`) admit the
+budget exactly. The renderer enforces the bound at startup and refuses to render
+parameters that violate it.
 
 ## License
 
