@@ -110,25 +110,37 @@ $T_1 \approx 6.4$ ns. **The becoming of the scene as a wave-mechanical object
 is bounded by this scale.** Concrescence beyond $T_1$ adds no qualitatively
 new modes — only the exponentially decaying tails of those already present.
 
-This gives a principled rule for the renderer's time horizon:
+This gives a principled rule for the renderer's time horizon. Writing
+$N_{\text{bins}}$ for `NUM_BINS` and $\Delta t$ for `DT`:
 
 $$
-\text{NUM\_BINS} \cdot \mathrm{DT} \;\gtrsim\; 3\, T_1.
+N_{\text{bins}} \cdot \Delta t \;\gtrsim\; 3\, T_1.
 $$
 
 The factor of 3 captures the first three rings of the lowest mode, after
 which higher-mode interference is the only structure remaining. At the
-defaults (`NUM_BINS = 200`, `DT = 40\,\text{ps}` ⇒ $8$ ns) we capture
-$\approx 1.25\, T_1$ — enough to see the wavefront establish but not its
-ring-down. Doubling `NUM_BINS` to $400$ would sit comfortably above the
-$3\, T_1$ threshold for the present scene.
+defaults ($N_{\text{bins}} = 200$, $\Delta t = 40$ ps, total $8$ ns) we
+capture $\approx 1.25\, T_1$ — enough to see the wavefront establish but
+not its ring-down. Doubling $N_{\text{bins}}$ to $400$ would sit comfortably
+above the $3\, T_1$ threshold for the present scene.
 
 Light is electromagnetic and incoherent in path tracing, so the literal
 Helmholtz problem differs from the scalar Dirichlet idealisation above.
 But the *bound* survives: the spectral radius $\rho(K) < 1$ of the radiosity
 operator gives an exactly analogous bound on bounce count,
-$N_{\max} \sim |\log \rho(K)|^{-1}$. Both are statements that **a closed
-scene has finite becoming**, set by its geometry.
+$N_{\max} \sim |\log \rho(K)|^{-1}$.
+
+The discrete picture is sharper still. The path society *is* a graph —
+vertices are scattering events, edges are ray segments — and the renderer
+samples it directly. Chung's spectral graph theory (Chung 1997, Ch. 8,
+*Eigenvalues of subgraphs with boundary conditions*) gives a Dirichlet
+Laplacian on any finite subgraph $S$ whose boundary $\partial S$ is held at
+zero, with smallest eigenvalue $\lambda_1(S)$ that controls relaxation on
+$S$ exactly as in the continuum. The closed scene picks out a subgraph; its
+$\lambda_1$ is the combinatorial bound on becoming. All three pictures —
+continuous Helmholtz, radiosity operator, Chung subgraph Dirichlet — agree
+in their qualitative content: **a closed scene has finite becoming**, set
+by its geometry.
 
 ## 4. What is rendered, then, in three sentences
 
@@ -148,6 +160,10 @@ the wavefront.
   original radiosity formulation as a finite hypergraph operator.
 - Chavel, I. *Eigenvalues in Riemannian Geometry.* Academic Press, 1984. —
   Faber–Krahn, Weyl's law, the heat-kernel proof.
+- Chung, F. R. K. *Spectral Graph Theory.* CBMS Regional Conference Series in
+  Mathematics, **No. 92**. American Mathematical Society, 1997. — Chapter 8,
+  *Eigenvalues of subgraphs with boundary conditions*, gives the discrete
+  Dirichlet bound for the path-society picture of §1 and §3.
 - Jarabo, A.; Marco, J.; Muñoz, A.; Buisan, R.; Jarosz, W.; Gutierrez, D.
   *A Framework for Transient Rendering.* ACM TOG 2014. — the Monte Carlo
   realisation cited in the README.
