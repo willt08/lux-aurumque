@@ -52,11 +52,12 @@ exactly one incoming ray, one scattered ray. But the natural object encoding
 the full geometric transfer is the **radiosity operator** $K$:
 
 $$
-K[B](x) = \int_{\partial \Omega} f_r(x, \omega_i \to \omega_o)\, V(x, y)\, \cos\theta\, B(y)\, dy
+K[B](x) = \int_{\partial\Omega} f_r(x,\, \omega_i,\, \omega_o)\, V(x, y)\, \cos\theta\, B(y)\, dy
 $$
 
-— a kernel on the scene's surface manifold that takes "outgoing radiance at
-$y$" to "incoming-then-reflected radiance at $x$". Equilibrium is the fixed
+— a kernel $f_r \cdot V \cdot \cos\theta$ on the scene's surface manifold
+that takes "outgoing radiance at $y$" to "incoming-then-reflected radiance
+at $x$". Equilibrium is the fixed
 point $B = E + K B$; multi-bounce light is the Neumann series
 $B = \sum_{n=0}^\infty K^n E$.
 
