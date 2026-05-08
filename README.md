@@ -154,6 +154,19 @@ the name of clarity:
 - Jarabo's PhD thesis, *Femto-Photography: Visualizing Light in Motion*,
   2015 — the most readable single document on the subject.
 
+## On what is rendered
+
+What the renderer is *computing* — beyond the pixel-side description above —
+is summarised in a companion note, [NOTES_PROCESS.md](NOTES_PROCESS.md):
+the path-traced society of occasions in the sense of Whitehead's
+*Process and Reality*, the radiosity operator as a continuous hypergraph,
+and the Dirichlet spectrum of the scene as the bound on its becoming. That
+last point yields a concrete heuristic: `NUM_BINS · DT ≳ 3 T_1`, where
+`T_1 ≈ 2 · diam(Ω) / c` is the period of the room's lowest mode.
+For the default scene `T_1 ≈ 6.4 ns`; the defaults sit at `1.25 T_1`,
+so doubling `NUM_BINS` is the principled move when fidelity to the
+ring-down matters.
+
 ## License
 
 Dual MIT / Apache-2.0.
