@@ -1,24 +1,51 @@
 [package]
 name          = "lux-aurumque"
-version       = "0.2.0"
+version       = "0.3.0"
 edition       = "2024"
 rust-version  = "1.85"
 authors       = ["3BSN LLC"]
-description   = "A minimal transient path tracer: light propagating with finite speed, rendered frame-by-picosecond."
+description   = "A transient path tracer and pluggable vision-pipeline toolkit built on a process-philosophical spine."
 license       = "MIT OR Apache-2.0"
 readme        = "README.md"
 repository    = "https://github.com/willt08/lux-aurumque"
 homepage      = "https://github.com/willt08/lux-aurumque"
-keywords      = ["graphics", "rendering", "path-tracing", "transient", "physics"]
-categories    = ["graphics", "rendering", "science"]
+keywords      = ["graphics", "rendering", "path-tracing", "vision", "generative"]
+categories    = ["graphics", "rendering", "science", "multimedia::video"]
+documentation = "https://docs.rs/lux-aurumque"
 exclude       = ["frames/", "*.mp4", "preview.gif"]
 
+[package.metadata.docs.rs]
+features = ["runaway-hackathon"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+# Anthropic vision client (AnthropicVisionClient).
+# Requires ANTHROPIC_API_KEY at runtime.
+anthropic-vision = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:base64"]
+# Runway video client (RunwayVideoClient) and PromptShape presets.
+# Requires RUNWAY_API_KEY at runtime.
+runway-video = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:base64", "dep:tokio"]
+# Convenience alias: full vision pipeline (both clients).
+runaway-hackathon = ["anthropic-vision", "runway-video"]
+
 [dependencies]
-glam   = "0.27"   # SIMD-friendly 3D vector math
-rayon  = "1.10"   # data-parallel pixel rendering
-image  = { version = "0.25", default-features = false, features = ["png"] }
-rand   = "0.8"
-rand_xoshiro = "0.6"  # fast, deterministic per-thread RNG
+glam         = "0.27"
+rayon        = "1.10"
+image        = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rand         = "0.8"
+rand_xoshiro = "0.6"
+async-trait  = "0.1"
+
+reqwest    = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde      = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+base64     = { version = "0.22", optional = true }
+tokio      = { version = "1", features = ["time"], optional = true }
+
+[dev-dependencies]
+tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
+dotenvy = "0.15"
+hound   = "3.5"
 
 [profile.release]
 opt-level = 3

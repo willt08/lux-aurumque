@@ -1,28 +1,136 @@
 # lux-aurumque
 
-*Lux Aurumque* — Latin, "Light and Gold." A minimal **transient path tracer**
-in Rust, rendering a small gilded room as a wavefront of light sweeps through it.
+*Lux Aurumque* — Light and Gold.
+
+A **transient path tracer** and **pluggable vision-pipeline toolkit** in Rust,
+unified by a process-philosophical spine. Two substrates, one coherence guarantee:
+the [`SpectralBudget`] bound that keeps becoming finite — whether the domain is
+photons propagating through a gilded room or tokens propagating through a vision model.
 
 ![preview](https://raw.githubusercontent.com/willt08/lux-aurumque/main/preview.gif)
 
-Standard renderers compute the steady-state radiance arriving at a sensor —
-the equilibrium reached after light has bounced around forever. *Transient*
-rendering refuses that simplification. Light propagates at a finite speed,
-and every photon path has a definite **duration** equal to its total optical
-length divided by *c*. By binning each path's contribution into a histogram
-indexed by that duration, we render not a single image but a *movie of light
-propagating through the scene*, frame by picosecond.
+---
 
-This project renders such a movie. Each output PNG is one slice of the time
-histogram (40 ps wide by default), and stitching them produces a video where
-you can watch a Gaussian pulse leave the source, reach the gold sphere on a
-measurable delay, scatter off the warm walls, and finally return to the
-camera by progressively longer paths.
+## What it does (v0.3.0)
+
+Two independent capabilities ship in one crate:
+
+**1. Transient path tracer** — renders a physics-correct wavefront movie.
+Standard path tracers compute steady-state radiance (light bounced until
+equilibrium). This one refuses that simplification: every photon path carries
+its cumulative optical length, which determines its arrival time. Binning by
+arrival time produces a time-resolved movie of a Gaussian pulse propagating
+through a Cornell-box scene reskinned in aurum.
+
+**2. Vision pipeline** — a model-agnostic, multimodal inference chain with
+pluggable backends. In v0.3.0 this is a first-class library API:
+
+```rust
+use lux_aurumque::{VisionConcrescence, Antecedent, MockVisionClient, SpectralBudget};
+use lux_aurumque::anthropic::AnthropicVisionClient;  // feature: anthropic-vision
+use lux_aurumque::runway::RunwayVideoClient;          // feature: runway-video
+use lux_aurumque::shape::PromptShape;                 // feature: runway-video
+```
+
+---
+
+## Vision pipeline — architecture
+
+### Backbone: pluggable `VisionClient`
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  VisionConcrescence                                              │
+│  ┌──────────┐  ┌──────┐  ┌──────┐  ┌───────┐                   │
+│  │ Image    │  │ OCR  │  │ EXIF │  │ Audio │  ← Antecedents     │
+│  └──────────┘  └──────┘  └──────┘  └───────┘                   │
+│        │            │         │         │                        │
+│        └────────────┴─────────┴─────────┘                       │
+│                              │                                   │
+│                    SpectralBudget::try_admit                      │
+│                    (token-window guard)                          │
+│                              │                                   │
+│                     VisionClient::synthesize                      │
+│                     (MockVisionClient | AnthropicVisionClient)   │
+│                              │                                   │
+│                         UnifiedScene  →  SceneArchive            │
+└──────────────────────────────────────────────────────────────────┘
+                               │
+                      RunwayVideoClient
+                      (text_to_video | image_to_video
+                       | character_performance)
+```
+
+**Implement `VisionClient` to swap any vision model in.** The `MockVisionClient`
+runs the full pipeline offline with no API keys — useful for testing the pipeline
+shape before paying for inference.
+
+### Multimodal feature fusion
+
+`VisionConcrescence` accepts heterogeneous antecedents in a single forward pass:
+
+| Antecedent | Token weight estimate | Role |
+|---|---|---|
+| `Image` | `w × h / 750` | Primary visual feature |
+| `Ocr` | `bytes / 4` | Textual overlay / caption signal |
+| `Exif` | field count × avg chars / 4 | Metadata conditioning |
+| `Audio` | `bytes / 4` | Temporal / semantic alignment |
+
+The aggregate token diameter is checked against `SpectralBudget` before any
+inference fires. Over-budget prehensions are rejected with a structured error
+that carries the diameter, bound, `T_1`, and ring-down factor — diagnosable
+at the call site without inspecting internals.
+
+### Chained inference (video continuation)
+
+Each video segment is one `Occasion` in a personally-ordered society:
+
+```
+frame_N.mp4
+    │
+    ├─ extract_final_frame (ffmpeg)
+    │
+    ├─ Claude: describe_image × 2 (parallel tokio::try_join!)
+    │     ├─ CHARACTER_DIRECTIVE  → character embedding (≤300 chars)
+    │     └─ LOCI_DIRECTIVE       → spatial context embedding (≤300 chars)
+    │
+    ├─ compose (character + loci + PromptShape directive)
+    │
+    ├─ translate_nexus (Claude: JSON nexus → caption prose, ≤950 chars)
+    │
+    └─ RunwayVideoClient::image_to_video  →  task_id (frame_N+1)
+```
+
+The two Claude extraction calls are **independent prehensions of the same datum**
+— they run in parallel. The structured JSON nexus is translated into caption-shaped
+video prompt prose by a second Claude call before submission to Runway, stripping
+JSON syntax that would otherwise leak as on-screen text in the video output.
+
+### PromptShape — structured prompt engineering layer
+
+Six presets ship as library types in `lux_aurumque::shape::PromptShape`:
+
+| Shape | Description |
+|---|---|
+| `json` | Electron-orbital society, three-phase camera |
+| `prose` | Explicit causal linkages, Newtonian |
+| `bare` | No structural markers |
+| `fly` | Owl breaks the picture-plane (essentia + deictic reductio); dolly-zoom terminates on iris at t=8s |
+| `reverence` | Backflip → kneel reverence, locked-off, Greco-Roman |
+| `lux` | Holomorphic prism: light in the frame decomposes into spectral arcs, conformal warp, no object motion |
+
+Shapes with a glossary (`json`, `fly`, `reverence`, `lux`) route through Claude's
+`translate_nexus` — the translation seam converts the structured nexus into
+caption prose grounded in the relational glossary, enforcing visual commitments
+the video encoder's text backbone is trained to consume.
+
+Prose and bare shapes bypass translation and go directly to Runway.
+
+---
 
 ## Quick start
 
-Requirements: Rust 1.85+ (edition 2024), a C linker (`build-essential` on
-Debian/Ubuntu), `ffmpeg` for the final encode.
+### Path tracer
 
 ```bash
 cargo run --release
@@ -30,163 +138,160 @@ ffmpeg -framerate 30 -i frames/frame_%04d.png \
        -c:v libx264 -pix_fmt yuv420p -crf 18 lux-aurumque.mp4
 ```
 
-Defaults (640×480, 256 spp, 200 time bins of 40 ps) take a few minutes on a
-modern laptop and need ~800 MB of RAM. Tune `WIDTH`, `HEIGHT`, `SAMPLES`,
-`NUM_BINS`, `DT` in `src/main.rs`.
+### Vision pipeline
 
-## What you'll see
+```bash
+# Set keys
+export ANTHROPIC_API_KEY=...
+export RUNWAY_API_KEY=...
 
-A Cornell-box-style room reskinned in *aurum* — cream floor / ceiling / back
-wall, deep copper left wall, antique amber right wall. On the floor: a
-polished gold sphere (R 1.00, G 0.78, B 0.35 — gold's spectral response in
-linear sRGB) and a smaller satin-gold diffuse sphere. Near the ceiling sits
-a small emitter that fires a single 50 ps Gaussian pulse, warm-tinted to
-roughly 3000 K (R:G:B = 50:38:18).
+# Describe an image → image-to-video (Claude caption seeds Runway)
+cargo run --example concrescence --features runaway-hackathon -- image.png
 
-Camera is at `(0, 0.27, 0.85)` m; light at `(0, 0.50, −0.30)` m, ~1.17 m apart.
-Direct light therefore reaches the camera around `t ≈ 1.17 / c ≈ 3.9 ns`,
-i.e. frame **~98** at `DT = 40 ps`. Things to look for:
+# Image-anchored shape mode (skip describe; shape drives motion)
+cargo run --example concrescence --features runaway-hackathon -- \
+  image.png --prompt-shape fly
 
-1. **Direct light arrives first** at frame ~98 — the source disc itself.
-2. **Specular highlight on the gold sphere** a few frames later, as the
-   wavefront catches the polished surface.
-3. **Diffuse satin-gold sphere illuminating** with a measurable delay
-   relative to the gold mirror (cosine-weighted scatter, longer effective
-   path).
-4. **Warm color bleed onto the cream walls** arriving later still — each
-   bounce adds a centimeter or two of path length.
-5. **Late tails** in the last ~30 frames where multi-bounce paths trickle in.
+# Text-to-video, shape preset
+cargo run --example concrescence --features runaway-hackathon -- \
+  --prompt-shape lux
 
-## Architecture
+# Chain from a prior Runway task (parallel character + loci extraction)
+cargo run --example concrescence --features runaway-hackathon -- \
+  --continue-from <task-id> --prompt-shape fly
+
+# Chain from a local mp4 — image_to_video (prompt-shape present)
+LUX_VIDEO_DURATION_SECS=8 \
+cargo run --example concrescence --features runaway-hackathon -- \
+  --continue-from-file prior.mp4 --prompt-shape lux
+
+# Chain from a local mp4 — character_performance (no prompt-shape)
+cargo run --example concrescence --features runaway-hackathon -- \
+  --continue-from-file prior.mp4
+```
+
+### Environment variables
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Required for real synthesis and nexus translation |
+| `RUNWAY_API_KEY` | — | Required for any video generation |
+| `LUX_VISION_MODEL` | `claude-sonnet-4-6` | Vision model for synthesis and translation |
+| `LUX_VIDEO_MODEL` | endpoint-dependent | Runway model (text/image paths only) |
+| `LUX_CHARACTER_PERFORMANCE_MODEL` | `act_two` | Model for character_performance endpoint |
+| `LUX_VIDEO_DURATION_SECS` | `4` | Output video duration |
+| `LUX_PUBLIC_FIGURE_THRESHOLD` | `low` | Runway content moderation gate |
+| `LUX_RUNWAY_VIDEO_MAX_BYTES` | `15728640` (15 MB) | Reference video cap for character_performance |
+| `LUX_SKIP_CLAUDE_INHERITANCE` | `0` | Skip Claude extraction on no-shape continuation |
+
+---
+
+## Feature flags
+
+```toml
+[dependencies]
+lux-aurumque = { version = "0.3", features = ["runaway-hackathon"] }
+```
+
+| Feature | Enables |
+|---|---|
+| *(none)* | Path tracer + vision spine (`VisionClient`, `MockVisionClient`, `VisionConcrescence`, `SceneArchive`, `SpectralBudget`) |
+| `anthropic-vision` | `lux_aurumque::anthropic::AnthropicVisionClient` |
+| `runway-video` | `lux_aurumque::runway::RunwayVideoClient` + `lux_aurumque::shape::PromptShape` |
+| `runaway-hackathon` | Alias: enables both `anthropic-vision` and `runway-video` |
+
+The base crate (no features) has no network dependencies. Pull in only what you need.
+
+---
+
+## Practical applications
+
+**Generative video continuation** — chain any video through Claude feature
+extraction + Runway generation. Each segment inherits character and spatial
+context from the prior frame; the `PromptShape` preset steers the motion without
+re-prompting from scratch.
+
+**Multimodal scene understanding pipeline** — fuse image, OCR, EXIF, and audio
+transcripts into a single unified caption with token-budget enforcement.
+Swap `AnthropicVisionClient` for your own `VisionClient` impl to run against any
+vision backbone (GPT-4o, Gemini Vision, local BLIP-2, etc.).
+
+**Prompt ablation framework** — the `PromptShape` system was designed for
+controlled ablations: fix the image anchor, vary the shape, measure temporal
+coherence in the latent walk. `json` vs `prose` vs `bare` isolate the effect
+of structural encoding on the video model's motion generation.
+
+**Physics-grounded token budgeting** — `SpectralBudget` enforces the same
+Faber–Krahn arithmetic that bounds the path tracer's render horizon, ported to
+token windows. The principal period `T_1` is your model's context window;
+`ring_down_factor = 3` gives a `3 · T_1` admission ceiling. The same struct
+works for any bounded sequential domain.
+
+**Light-field phenomena visualization** — the `--prompt-shape lux` preset
+drives a holomorphic prism effect: locked camera, no object motion, only the
+light field bends and fans into spectral arcs following conformal complex-plane
+geometry. Built on the same process spine as the path tracer.
+
+---
+
+## Library structure (v0.3.0)
 
 ```
 src/
-├── main.rs          entry: scene setup, tile-based parallel render, PNG writeout
-├── transient.rs     time-binned framebuffer + time-aware path tracer
-├── camera.rs        pinhole camera ray generation
-├── hit.rs           HitRecord, Hittable trait, world list
-├── sphere.rs        analytic sphere intersection
-├── material.rs      Lambertian / Metal / DiffuseLight (pulse emitter)
-├── ray.rs           Ray with cumulative path_length
-└── vec3.rs          Vec3 conveniences over glam
+├── lib.rs          re-exports; module declarations
+├── process.rs      Occasion, Society, Concrescence, PublicWorld, SpectralBudget
+├── vision.rs       VisionClient, MockVisionClient, VisionConcrescence,
+│                   SceneArchive, Antecedent, ImagePrehension, load_image, …
+├── anthropic.rs    AnthropicVisionClient (feature: anthropic-vision)
+├── runway.rs       RunwayVideoClient, TaskHandle (feature: runway-video)
+├── shape.rs        PromptShape + nexus constants (feature: runway-video)
+├── tests.rs        28 unit tests (SpectralBudget, vision core, PromptShape, loaders)
+│
+│   Path tracer:
+├── transient.rs    time-binned framebuffer + transient path tracer
+├── camera.rs       pinhole ray generation
+├── hit.rs          HitRecord, Hittable
+├── sphere.rs       analytic sphere intersection
+├── material.rs     Lambertian / Metal / DiffuseLight
+├── ray.rs          Ray with cumulative path_length
+├── scene.rs        scene graph
+└── vec3.rs         Vec3 over glam
+
+examples/
+├── concrescence.rs   vision pipeline CLI (~320 lines; imports from library)
+├── receptacle.rs     process-spine blueprint (Plato's χώρα as vision substrate)
+└── spectral_vibe.rs  Faber–Krahn tempo derivation → 6/8 audio bed
 ```
 
-The single conceptual delta from a textbook path tracer
-([Ray Tracing in One Weekend](https://raytracing.github.io/) and friends)
-lives in three places:
+---
 
-- **`Ray::path_length`** — every ray carries the cumulative optical length
-  of its history. Each bounce adds the segment length to the next ray's
-  starting `path_length`.
-- **`trace_path` deposit step** — when a path terminates on an emitter, its
-  contribution is deposited into a *window* of bins around
-  `t_arrival = path_length / c`, weighted by the source's Gaussian temporal
-  profile `p(τ) = exp(−τ² / 2σ²)`. The window spans ±4σ (~99.99% of the
-  pulse mass); depositing into only the central bin would silently drop
-  most of the pulse whenever `σ ≫ dt`.
-- **`Pulse::weight`** — evaluates the unnormalized Gaussian at the
-  bin-center offset. Energy is in arbitrary units; the global Reinhard
-  exposure pass in `main.rs` normalizes brightness across all bins.
+## Path tracer physics knobs
 
-Everything else — BRDFs (Lambertian, Metal, DiffuseLight), tone mapping
-(Reinhard + sRGB-ish 1/2.2 gamma), and parallelism — is conventional.
+| Constant | Default | Effect |
+|---|---|---|
+| `WIDTH × HEIGHT` | 640×480 | Resolution — memory scales as `W × H × NUM_BINS × 12 bytes` |
+| `SAMPLES` | 256 | Paths per pixel |
+| `DT` | 40 ps | Time-bin width — smaller = sharper wavefronts |
+| `NUM_BINS` | 200 | Time slices; `NUM_BINS × DT × c` is the path-length window |
+| `PULSE_SIGMA` | 50 ps | Gaussian pulse temporal width |
+| `TILE_SIZE` | 64 | Render tile edge; controls peak memory |
 
-## Physics knobs
+The renderer enforces `NUM_BINS · DT ≤ 3 · T_1` at startup (Faber–Krahn bound,
+`T_1 ≈ 2 · diam(Ω) / c`). Parameters that violate the budget are refused with
+a structured error before any computation runs.
 
-| Constant       | Default | What it controls                                                                                            |
-|----------------|---------|-------------------------------------------------------------------------------------------------------------|
-| `WIDTH × HEIGHT` | 640×480 | Image resolution. Memory scales as `W × H × NUM_BINS × 12 bytes`.                                         |
-| `SAMPLES`      | 256     | Paths per pixel. Transient is sample-hungrier than steady-state — most paths deposit into few bins.        |
-| `MAX_DEPTH`    | 8       | Hard cap on bounces; russian roulette starts terminating after depth 3.                                    |
-| `DT`           | 40 ps   | Width of each time bin. Smaller = sharper wavefronts, more bins needed.                                    |
-| `NUM_BINS`     | 200     | Number of time slices = video length. `NUM_BINS × DT × c` is the path-length window (default ~2.4 m).      |
-| `PULSE_SIGMA`  | 50 ps   | Temporal width σ of the emitted Gaussian. Pulse spreads ±4σ across bins; `σ ≈ DT` gives smooth wavefronts. |
-| `TILE_SIZE`    | 64      | Render tile edge in pixels. Per-tile partial frame is `TILE_SIZE² × NUM_BINS × 12 bytes` (≈ 9.8 MB).       |
-
-## Parallelism
-
-Tile-based with a single shared global frame:
-
-1. The image is split into `TILE_SIZE × TILE_SIZE` tiles (32 tiles at
-   640×480 / 64).
-2. Tiles run in parallel via `rayon::par_iter`. Each thread renders its
-   tile into a small private `TransientFrame` (~9.8 MB at defaults).
-3. After finishing a tile, the thread briefly locks the global frame and
-   merges its partial contribution at the tile's offset
-   (`TransientFrame::merge_tile`).
-
-Memory peaks at `1 × global frame + active_threads × tile frame` — about
-**780 MB** at the defaults with 4 threads. The earlier `fold + reduce`
-pattern allocated one full-size frame *per rayon work chunk* (16+ at high
-parallelism), which OOM-killed the renderer at modest resolutions on
-memory-constrained boxes (e.g. WSL2's default 7.5 GB). Tiles are the
-correct primitive here.
-
-Mutex contention is bounded by tile count, not pixel count, and the
-critical section copies a few MB of floats — negligible vs. the per-tile
-render time.
-
-## What's deliberately missing
-
-This is a teaching/portfolio implementation. The following are absent in
-the name of clarity:
-
-- **Next event estimation / explicit light sampling.** Pure brute-force
-  path tracing. Convergence is correspondingly slow on small lights.
-- **BVH acceleration.** With ~8 spheres, linear iteration is fine.
-- **Spectral rendering.** RGB only. Real transient renderers track
-  wavelength too — see Jarabo et al. for the spectral-transient framework.
-- **Participating media.** No fog, no scattering volumes. Marco et al.
-  (2017) extended transient rendering to media; a natural next step.
-- **f16 framebuffer.** All deposits are `f32`. At 1080p the global frame
-  reaches ~5 GB; halving the precision (or chunked rendering of bin ranges)
-  would push the resolution ceiling further.
-- **Inverse rendering.** The forward model here is the foundation for
-  non-line-of-sight reconstruction — but the inverse problem is its own
-  project.
+---
 
 ## Further reading
 
-- Jarabo, Marco, Muñoz, Buisan, Jarosz, Gutierrez. **A Framework for
-  Transient Rendering.** ACM TOG 2014.
-- Velten et al. **Femto-Photography: Capturing and Visualizing the
-  Propagation of Light.** SIGGRAPH 2013.
-- Jarabo's PhD thesis, *Femto-Photography: Visualizing Light in Motion*,
-  2015 — the most readable single document on the subject.
+- Jarabo et al. **A Framework for Transient Rendering.** ACM TOG 2014.
+- Velten et al. **Femto-Photography.** SIGGRAPH 2013.
+- Whitehead, **Process and Reality** (1929) — the philosophical substrate for
+  the `process.rs` spine. [`NOTES_PROCESS.md`](NOTES_PROCESS.md) maps the
+  renderer's data structures onto the ontology directly.
 
-## Library API (v0.2.0)
-
-`lux-aurumque` is also a library. The renderer's process-philosophical
-spine is exposed as a small set of traits — `Occasion`, `Society`,
-`Concrescence`, `PublicWorld`, `SpectralBudget` — over which downstream
-crates can implement their own kinds of flux and inherit the same
-coherence guarantees. The most important of these is the spectral-budget
-bound on becoming, which catches *runaway* token growth in a vision API
-the same way it catches an over-long render horizon here.
-
-The runnable blueprint at [`examples/receptacle.rs`](examples/receptacle.rs)
-ports Plato's χώρα — the receptacle that takes on Forms without being
-them — to a vision-API substrate, with the same `SpectralBudget` enforcing
-the token-window bound at the *natural*-necessity tier. Run with
-`cargo run --example receptacle`.
-
-The metaphysical justification of these traits is in
-[`NOTES_PROCESS.md`](NOTES_PROCESS.md).
-
-## On what is rendered
-
-What the renderer is *computing* — beyond the pixel-side description above —
-is summarised in a companion note, [NOTES_PROCESS.md](NOTES_PROCESS.md):
-the path-traced society of occasions in the sense of Whitehead's
-*Process and Reality*, the radiosity operator as a continuous hypergraph,
-and the Dirichlet spectrum of the scene as the bound on its becoming. That
-last point yields a concrete heuristic: `NUM_BINS · DT ≳ 3 T_1`, where
-`T_1 ≈ 2 · diam(Ω) / c` is the period of the room's lowest mode. For
-the default scene `T_1 ≈ 6.34 ns`; the v0.2.0 defaults
-(`NUM_BINS = 475`, `DT = 40 ps`, total `19.0 ns ≤ 3.00 T_1`) admit the
-budget exactly. The renderer enforces the bound at startup and refuses to render
-parameters that violate it.
+---
 
 ## License
 
-Dual MIT / Apache-2.0.
+Dual MIT / Apache-2.0. © 3BSN LLC.

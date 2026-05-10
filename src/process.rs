@@ -82,6 +82,7 @@ impl SpectralBudget {
     /// `ring_down_factor · T_1` ceiling; otherwise returns the structured
     /// violation so the caller can decide whether to abort, downgrade, or
     /// surface the error.
+    #[must_use = "handle the Err variant to surface budget violations"]
     pub fn try_admit(&self, diameter: f64) -> Result<(), BudgetError> {
         let bound = self.ring_down_factor * self.principal_period;
         if diameter <= bound {
@@ -97,6 +98,7 @@ impl SpectralBudget {
     }
 
     /// Boolean shortcut where the caller does not need violation detail.
+    #[must_use]
     pub fn admits(&self, diameter: f64) -> bool {
         self.try_admit(diameter).is_ok()
     }

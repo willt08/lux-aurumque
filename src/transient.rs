@@ -154,6 +154,7 @@ impl Pulse {
 ///   - the accumulated material throughput along the path,
 ///   - the surface's intrinsic emitted radiance,
 ///   - the temporal pulse profile evaluated at the path's arrival time.
+#[allow(clippy::too_many_arguments)]
 pub fn trace_path(
     ray_in: Ray,
     world: &dyn Hittable,

@@ -1,3 +1,6 @@
 /target
 /frames
 *.mp4
+*.wav
+*.jpg
+.env

@@ -42,6 +42,10 @@ pub struct HittableList {
     pub objects: Vec<Arc<dyn Hittable>>,
 }
 
+impl Default for HittableList {
+    fn default() -> Self { Self::new() }
+}
+
 impl HittableList {
     pub fn new() -> Self { Self { objects: Vec::new() } }
     pub fn push(&mut self, obj: Arc<dyn Hittable>) { self.objects.push(obj); }
