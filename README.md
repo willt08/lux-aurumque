@@ -1,5 +1,11 @@
 # lux-aurumque
 
+[![CI](https://github.com/willt08/lux-aurumque/actions/workflows/ci.yml/badge.svg)](https://github.com/willt08/lux-aurumque/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/lux-aurumque.svg)](https://crates.io/crates/lux-aurumque)
+[![docs.rs](https://img.shields.io/docsrs/lux-aurumque)](https://docs.rs/lux-aurumque)
+[![License](https://img.shields.io/crates/l/lux-aurumque.svg)](https://crates.io/crates/lux-aurumque)
+[![MSRV](https://img.shields.io/crates/msrv/lux-aurumque.svg)](https://github.com/willt08/lux-aurumque)
+
 *Lux Aurumque* — Light and Gold.
 
 A **transient path tracer** and **pluggable vision-pipeline toolkit** in Rust,
@@ -130,7 +136,43 @@ Prose and bare shapes bypass translation and go directly to Runway.
 
 ## Quick start
 
-### Path tracer
+### Library — minimal pipeline (no features, no keys)
+
+```toml
+[dependencies]
+lux-aurumque = "0.3"
+tokio        = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+```rust
+use std::sync::Arc;
+use lux_aurumque::{
+    Antecedent, Concrescence, MockVisionClient, OcrPrehension,
+    SpectralBudget, VisionConcrescence,
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Arc::new(MockVisionClient);
+    let budget = SpectralBudget { principal_period: 4_000.0, ring_down_factor: 3.0 };
+
+    let scene = VisionConcrescence::new(client, budget)
+        .prehend(Antecedent::Ocr(OcrPrehension {
+            text: "Cornell box; gold sphere on cream floor".into(),
+            confidence: 0.95,
+        }))
+        .unify()
+        .await?;
+
+    println!("{}", scene.caption);
+    Ok(())
+}
+```
+
+Swap `MockVisionClient` for `AnthropicVisionClient::from_env()` (feature
+`anthropic-vision`) for real synthesis. The pipeline structure is unchanged.
+
+### Path tracer (clone the repo)
 
 ```bash
 cargo run --release
@@ -138,7 +180,10 @@ ffmpeg -framerate 30 -i frames/frame_%04d.png \
        -c:v libx264 -pix_fmt yuv420p -crf 18 lux-aurumque.mp4
 ```
 
-### Vision pipeline
+Resolution / sample count / time-bin parameters live as constants in
+`src/main.rs` — edit there and re-run.
+
+### Vision pipeline (CLI example)
 
 ```bash
 # Set keys

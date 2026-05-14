@@ -80,8 +80,8 @@ impl TransientFrame {
 
     /// Accumulate a contribution into bin `bin` at pixel (x, y). The
     /// inherent fast path — used by `trace_path` and `merge_tile`. The
-    /// trait method [`process::PublicWorld::deposit`] wraps this with a
-    /// typed `Deposit` value for downstream consumers.
+    /// trait method [`crate::process::PublicWorld::deposit`] wraps this
+    /// with a typed [`Deposit`] value for downstream consumers.
     #[inline]
     pub fn accumulate(&mut self, bin: usize, x: usize, y: usize, color: Vec3) {
         if bin >= self.num_bins { return; }

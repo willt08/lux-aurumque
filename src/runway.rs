@@ -20,7 +20,7 @@ impl RunwayVideoClient {
     /// Image paths default to `gen4_turbo`; text-only paths to `veo3.1_fast`.
     pub fn from_env(default_model: &str) -> Result<Self, ConcrescenceError> {
         let api_key = std::env::var("RUNWAY_API_KEY")
-            .map_err(|_| ConcrescenceError::Refused("RUNWAY_API_KEY not set".into()))?;
+            .map_err(|_| ConcrescenceError::MissingEnv { var: "RUNWAY_API_KEY" })?;
         let model =
             std::env::var("LUX_VIDEO_MODEL").unwrap_or_else(|_| default_model.into());
         let base_url = std::env::var("LUX_RUNWAY_BASE_URL")
@@ -29,7 +29,8 @@ impl RunwayVideoClient {
     }
 
     /// Submit a text-to-video task. Returns the queued [`TaskHandle`];
-    /// poll `GET /v1/tasks/{id}` or call [`wait_for_completion`] for the result.
+    /// poll `GET /v1/tasks/{id}` or call [`Self::wait_for_completion`]
+    /// for the result.
     pub async fn text_to_video(
         &self,
         prompt: &str,
@@ -81,13 +82,13 @@ impl RunwayVideoClient {
         self.post_task("/v1/image_to_video", &body).await
     }
 
-    /// Submit a character_performance task. Transfers the motion and
-    /// Transfer the motion and expressions of `cfg.reference_video_bytes`
-    /// onto the appearance of `cfg.character_image_bytes`. Takes `model`
-    /// via [`CharacterPerformanceConfig`] — this endpoint uses a disjoint
-    /// model namespace (`act_two`) from text/image routes; `LUX_VIDEO_MODEL`
-    /// must not bleed in here. Reference video is capped at 15 MB by default
-    /// (`LUX_RUNWAY_VIDEO_MAX_BYTES` to override).
+    /// Submit a character-performance task. Transfers the motion and
+    /// expressions of `cfg.reference_video_bytes` onto the appearance of
+    /// `cfg.character_image_bytes`. The model is supplied via
+    /// [`CharacterPerformanceConfig`] — this endpoint uses a disjoint
+    /// model namespace (`act_two`) from text/image routes, so
+    /// `LUX_VIDEO_MODEL` must not bleed in here. Reference video is capped
+    /// at 15 MB by default; override with `LUX_RUNWAY_VIDEO_MAX_BYTES`.
     pub async fn character_performance(
         &self,
         cfg: CharacterPerformanceConfig<'_>,
@@ -109,12 +110,11 @@ impl RunwayVideoClient {
             .and_then(|s| s.parse().ok())
             .unwrap_or(15 * 1024 * 1024);
         if cfg.reference_video_bytes.len() > max_video {
-            return Err(ConcrescenceError::Refused(format!(
-                "reference video {} bytes > {} byte cap; trim the clip or raise \
-                 LUX_RUNWAY_VIDEO_MAX_BYTES",
-                cfg.reference_video_bytes.len(),
-                max_video,
-            )));
+            return Err(ConcrescenceError::OversizedInput {
+                kind: "reference_video",
+                bytes: cfg.reference_video_bytes.len(),
+                cap: max_video,
+            });
         }
         let reference_uri = format!(
             "data:{};base64,{}",
@@ -218,32 +218,66 @@ impl RunwayVideoClient {
 
 /// Configuration for [`RunwayVideoClient::character_performance`].
 ///
-/// `model` must be from the character-performance namespace (currently `act_two`).
-/// Use `LUX_CHARACTER_PERFORMANCE_MODEL` to override at runtime rather than
-/// `LUX_VIDEO_MODEL`, which addresses a disjoint endpoint.
+/// `model` must be from the character-performance namespace (currently
+/// `act_two`). Use `LUX_CHARACTER_PERFORMANCE_MODEL` to override at runtime
+/// rather than `LUX_VIDEO_MODEL`, which addresses a disjoint endpoint.
 pub struct CharacterPerformanceConfig<'a> {
+    /// Runway model id for the character-performance endpoint. Use
+    /// `"act_two"` unless Runway publishes a newer namespace entry.
     pub model: &'a str,
+    /// Encoded bytes of the still image whose subject's appearance is
+    /// transferred onto the reference video's motion. Capped at 3.33 MB
+    /// and downscaled to ≤ 2048 px on the long axis before upload.
     pub character_image_bytes: &'a [u8],
+    /// MIME type of `character_image_bytes`. Accepted values:
+    /// `"image/png"`, `"image/jpeg"`, `"image/webp"`, `"image/gif"`.
     pub character_media_type: &'static str,
+    /// Encoded bytes of the reference video supplying motion and
+    /// expression. Capped at 15 MB by default; override via the
+    /// `LUX_RUNWAY_VIDEO_MAX_BYTES` environment variable.
     pub reference_video_bytes: &'a [u8],
+    /// MIME type of `reference_video_bytes`, e.g. `"video/mp4"`.
     pub reference_media_type: &'static str,
+    /// Output aspect ratio as `"WIDTH:HEIGHT"` in pixels, e.g.
+    /// `"1280:720"`, `"768:1280"`, `"960:960"`. See Runway's
+    /// character-performance docs for the supported set.
     pub ratio: &'a str,
+    /// `true` to transfer body movement from the reference video;
+    /// `false` to limit transfer to facial expression only.
     pub body_control: bool,
+    /// Expression intensity in the range `0..=10`. Higher values amplify
+    /// facial motion from the reference video.
     pub expression_intensity: u8,
+    /// Content-moderation gate for public-figure resemblance. Accepted
+    /// values: `"low"`, `"auto"`, `"high"`. Defaults to the
+    /// `LUX_PUBLIC_FIGURE_THRESHOLD` environment variable when set.
     pub public_figure_threshold: &'a str,
 }
 
-/// What Runway returns on POST and on `GET /v1/tasks/{id}`. All fields
-/// beyond `id` are optional so the client tolerates schema drift.
+/// A Runway task returned by `POST /v1/{endpoint}` and `GET /v1/tasks/{id}`.
+/// All fields beyond `id` are optional so the client tolerates schema drift
+/// (new statuses, additional output entries, partial responses).
 #[derive(Debug, Deserialize)]
 pub struct TaskHandle {
+    /// Server-assigned task identifier. Use with
+    /// [`RunwayVideoClient::get_task`] and
+    /// [`RunwayVideoClient::wait_for_completion`].
     pub id: String,
+    /// Current task state. Known values: `"PENDING"`, `"RUNNING"`,
+    /// `"THROTTLED"`, `"SUCCEEDED"`, `"FAILED"`, `"CANCELLED"`. Treat
+    /// unknown values as "still running" — Runway adds states without
+    /// notice.
     #[serde(default)]
     pub status: Option<String>,
+    /// Output artefact URLs (typically a single signed video URL) once
+    /// `status == "SUCCEEDED"`. Empty while in progress.
     #[serde(default)]
     pub output: Vec<String>,
+    /// Progress in `[0.0, 1.0]` while running. `None` outside running.
     #[serde(default)]
     pub progress: Option<f32>,
+    /// Human-readable failure reason when `status` is `"FAILED"` or
+    /// `"CANCELLED"`; otherwise `None`.
     #[serde(default)]
     pub failure: Option<String>,
 }

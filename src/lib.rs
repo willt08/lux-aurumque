@@ -1,28 +1,59 @@
 //! `lux-aurumque` — a transient path tracer and pluggable vision-pipeline
 //! toolkit, unified by a process-philosophical spine.
 //!
-//! ## Path tracer
-//! `camera`, `hit`, `material`, `ray`, `scene`, `sphere`, `transient`, `vec3`
-//! render light propagating at finite speed, frame by picosecond.
+//! ## Quick example
+//!
+//! Build a vision pipeline with no features and no API keys. The
+//! [`MockVisionClient`] demonstrates the pipeline shape — swap it for
+//! `AnthropicVisionClient` (feature `anthropic-vision`) for real synthesis.
+//!
+//! ```no_run
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! use std::sync::Arc;
+//! use lux_aurumque::{
+//!     Antecedent, Concrescence, MockVisionClient, OcrPrehension,
+//!     SpectralBudget, VisionConcrescence,
+//! };
+//!
+//! let client = Arc::new(MockVisionClient);
+//! let budget = SpectralBudget { principal_period: 4_000.0, ring_down_factor: 3.0 };
+//!
+//! let scene = VisionConcrescence::new(client, budget)
+//!     .prehend(Antecedent::Ocr(OcrPrehension {
+//!         text: "Cornell box; gold sphere on cream floor".into(),
+//!         confidence: 0.95,
+//!     }))
+//!     .unify()
+//!     .await?;
+//!
+//! println!("{}", scene.caption);
+//! # Ok(()) }
+//! ```
 //!
 //! ## Vision pipeline
 //! `vision` — core types: [`VisionClient`], [`VisionConcrescence`],
 //! [`Antecedent`], [`SceneArchive`]. Implement [`VisionClient`] to plug in
 //! any vision model; [`MockVisionClient`] works without network access.
 //!
-//! `anthropic` (feature `anthropic-vision`) — [`anthropic::AnthropicVisionClient`]:
+//! `anthropic` (feature `anthropic-vision`) — `AnthropicVisionClient`:
 //! real Claude vision synthesis and nexus translation.
 //!
-//! `runway` (feature `runway-video`) — [`runway::RunwayVideoClient`]:
+//! `runway` (feature `runway-video`) — `RunwayVideoClient`:
 //! text-to-video, image-to-video, and character-performance generation.
 //!
-//! `shape` (feature `runway-video`) — [`shape::PromptShape`]: structured JSON
+//! `shape` (feature `runway-video`) — `PromptShape`: structured JSON
 //! nexus presets with relational glossaries, translated by Claude before submission.
+//!
+//! ## Path tracer
+//! `camera`, `hit`, `material`, `ray`, `scene`, `sphere`, `transient`, `vec3`
+//! render light propagating at finite speed, frame by picosecond. Clone the
+//! repo and run `cargo run --release` to produce the gilded-room movie.
 //!
 //! ## Process spine
 //! `process` — [`Occasion`], [`Society`], [`Concrescence`], [`PublicWorld`],
 //! [`SpectralBudget`]: the invariants both the renderer and the vision
-//! pipeline satisfy.
+//! pipeline satisfy. See `NOTES_PROCESS.md` in the repository for the full
+//! mapping onto Whitehead's ontology.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

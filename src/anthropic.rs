@@ -21,7 +21,7 @@ pub struct AnthropicVisionClient {
 impl AnthropicVisionClient {
     pub fn from_env() -> Result<Self, ConcrescenceError> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| ConcrescenceError::Refused("ANTHROPIC_API_KEY not set".into()))?;
+            .map_err(|_| ConcrescenceError::MissingEnv { var: "ANTHROPIC_API_KEY" })?;
         let model = std::env::var("LUX_VISION_MODEL")
             .unwrap_or_else(|_| "claude-sonnet-4-6".into());
         Ok(Self { api_key, model, max_tokens: 1024, http: reqwest::Client::new() })
@@ -168,11 +168,7 @@ impl VisionClient for AnthropicVisionClient {
                 Antecedent::Image(i) => Some(i),
                 _ => None,
             })
-            .ok_or_else(|| {
-                ConcrescenceError::Refused(
-                    "AnthropicVisionClient requires an Image antecedent".into(),
-                )
-            })?;
+            .ok_or(ConcrescenceError::MissingAntecedent { kind: "image" })?;
 
         const LIMIT: usize = 5 * 1024 * 1024;
         const MAX_SIDE: u32 = 1568;
