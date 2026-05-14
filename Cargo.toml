@@ -2,7 +2,7 @@
 name          = "lux-aurumque"
 version       = "0.3.0"
 edition       = "2024"
-rust-version  = "1.85"
+rust-version  = "1.88"
 authors       = ["3BSN LLC"]
 description   = "A transient path tracer and pluggable vision-pipeline toolkit built on a process-philosophical spine."
 license       = "MIT OR Apache-2.0"
