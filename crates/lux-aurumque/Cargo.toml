@@ -1,6 +1,6 @@
 [package]
 name          = "lux-aurumque"
-version       = "0.3.0"
+version       = "0.3.1"
 description   = "A transient path tracer in Rust: light propagating at finite speed, rendered frame by picosecond."
 keywords      = ["graphics", "rendering", "path-tracing", "transient", "physics"]
 categories    = ["graphics", "rendering", "science"]
