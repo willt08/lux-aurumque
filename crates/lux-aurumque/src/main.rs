@@ -20,7 +20,7 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 
 use lux_aurumque::camera::Camera;
-use lux_aurumque::process::SpectralBudget;
+use lux_aurumque::SpectralBudget;
 use lux_aurumque::scene;
 use lux_aurumque::transient::{trace_path, Pulse, TransientFrame, C};
 use lux_aurumque::vec3::Vec3;

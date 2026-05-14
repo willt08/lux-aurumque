@@ -519,18 +519,26 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 name = "lux-aurumque"
 version = "0.3.0"
 dependencies = [
- "async-trait",
- "base64",
- "dotenvy",
  "glam",
- "hound",
  "image",
  "rand 0.8.6",
  "rand_xoshiro",
  "rayon",
+ "spectral-budget",
+]
+
+[[package]]
+name = "lux-vision"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "dotenvy",
+ "image",
  "reqwest",
  "serde",
  "serde_json",
+ "spectral-budget",
  "tokio",
 ]
 
@@ -994,6 +1002,13 @@ checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "spectral-budget"
+version = "0.1.0"
+dependencies = [
+ "hound",
 ]
 
 [[package]]

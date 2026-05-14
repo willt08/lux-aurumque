@@ -22,7 +22,7 @@
 //! Willinton Triana Cardona / 3BSN LLC
 
 use hound::{SampleFormat, WavSpec, WavWriter};
-use lux_aurumque::process::SpectralBudget;
+use spectral_budget::SpectralBudget;
 use std::f32::consts::TAU;
 
 /// Speed of light in vacuum, m/s — the renderer's `c`.

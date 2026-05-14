@@ -1,28 +1,21 @@
-//! The vision-pipeline layer: pluggable multi-modal prehension → unified
-//! scene synthesis, bounded by [`SpectralBudget`].
-//!
-//! Core types are unconditional. Feature-gated clients (`AnthropicVisionClient`,
-//! `RunwayVideoClient`) live in their own modules and implement [`VisionClient`]
-//! as a drop-in swap for [`MockVisionClient`].
+//! Core pipeline types: input modalities, the `VisionClient` trait, the
+//! [`VisionPipeline`] builder, and the [`SpectralBudget`]-guarded `run`.
 
-use std::future::Future;
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use spectral_budget::{BudgetError, SpectralBudget};
 
-use crate::process::{BudgetError, Concrescence, Occasion, PublicWorld, Society, SpectralBudget};
-
-// ── Prehensions ──────────────────────────────────────────────────────────────
+// ── Input modalities ─────────────────────────────────────────────────────────
 
 /// Decoded image bytes packaged for inline upload to a vision model.
 /// Produced by [`load_image`]; can also be built by hand when bytes come
 /// from a non-file source (HTTP body, in-memory render, etc.).
 #[derive(Clone, Debug)]
-pub struct ImagePrehension {
+pub struct ImageInput {
     /// Original encoded bytes (PNG/JPEG/WebP/GIF). Shared via `Arc` so
-    /// cloning the prehension is cheap; the underlying buffer is never
+    /// cloning the input is cheap; the underlying buffer is never
     /// mutated after construction.
     pub raw_bytes: Arc<Vec<u8>>,
     /// MIME type string sent on the wire. Accepted values:
@@ -40,7 +33,7 @@ pub struct ImagePrehension {
 
 /// OCR text recovered from an image, with a confidence hint.
 #[derive(Clone, Debug)]
-pub struct OcrPrehension {
+pub struct OcrInput {
     /// Recognised text. May contain newlines; the synthesiser sees it
     /// verbatim.
     pub text: String,
@@ -52,7 +45,7 @@ pub struct OcrPrehension {
 
 /// Image metadata fields (typically EXIF, but any key/value pairs work).
 #[derive(Clone, Debug)]
-pub struct ExifPrehension {
+pub struct ExifInput {
     /// Ordered list of `(key, value)` pairs. Order is preserved in the
     /// rendered prompt so callers can prioritise important fields first.
     pub fields: Vec<(String, String)>,
@@ -61,7 +54,7 @@ pub struct ExifPrehension {
 /// Transcribed audio aligned with a visual scene (e.g. video soundtrack,
 /// narration, or accompanying recording).
 #[derive(Clone, Debug)]
-pub struct AudioPrehension {
+pub struct AudioInput {
     /// Plain-text transcript of the audio segment.
     pub transcript: String,
     /// Duration of the source audio in seconds. Used by the synthesiser
@@ -69,58 +62,48 @@ pub struct AudioPrehension {
     pub duration_secs: f32,
 }
 
-/// One heterogeneous antecedent, packaged as a uniform enum so the
-/// concrescence can iterate over them. Each variant is already
-/// objectified data — pre-perished facts entering from the public world.
+/// One heterogeneous input modality, packaged as a uniform enum so the
+/// pipeline can iterate over them.
 #[derive(Clone, Debug)]
-pub enum Antecedent {
-    Image(ImagePrehension),
-    Ocr(OcrPrehension),
-    Exif(ExifPrehension),
-    Audio(AudioPrehension),
+pub enum Input {
+    Image(ImageInput),
+    Ocr(OcrInput),
+    Exif(ExifInput),
+    Audio(AudioInput),
 }
 
-impl Antecedent {
+impl Input {
     /// Token weight used by [`SpectralBudget`] admission. The image
     /// estimate is a proxy (`w·h / 750`); text estimates use `bytes/4`.
     pub fn token_weight(&self) -> u32 {
         match self {
-            Antecedent::Image(i) => i.estimated_tokens,
-            Antecedent::Ocr(o) => (o.text.len() as u32).div_ceil(4),
-            Antecedent::Exif(e) => e
+            Input::Image(i) => i.estimated_tokens,
+            Input::Ocr(o) => (o.text.len() as u32).div_ceil(4),
+            Input::Exif(e) => e
                 .fields
                 .iter()
                 .map(|(k, v)| ((k.len() + v.len()) as u32) / 4 + 1)
                 .sum::<u32>()
                 .max(8),
-            Antecedent::Audio(a) => (a.transcript.len() as u32).div_ceil(4),
+            Input::Audio(a) => (a.transcript.len() as u32).div_ceil(4),
         }
     }
 }
 
-impl Occasion for Antecedent {
-    type Datum = Self;
-    type Satisfaction = Self;
-    fn datum(&self) -> &Self { self }
-    fn is_satisfied(&self) -> bool { true }
-    fn satisfaction(&self) -> Option<&Self> { Some(self) }
-}
+// ── Scene (the synthesised output) ────────────────────────────────────────────
 
-// ── Unified satisfaction ──────────────────────────────────────────────────────
-
-/// The output of one concrescence: a single textual scene description
-/// fused from all antecedents. Deposited into a [`SceneArchive`] when
-/// chaining occasions.
+/// The output of one pipeline run: a single textual scene description
+/// fused from all inputs. Deposit into a [`SceneArchive`] when chaining.
 #[derive(Clone, Debug)]
-pub struct UnifiedScene {
+pub struct Scene {
     /// The synthesised description. For [`MockVisionClient`] this is a
     /// deterministic summary of the inputs; for production clients
-    /// (`AnthropicVisionClient`, etc.) it is the model's caption verbatim.
+    /// (Anthropic, etc.) it is the model's caption verbatim.
     pub caption: String,
-    /// Number of antecedents that participated in this synthesis.
+    /// Number of inputs that participated in this synthesis.
     pub contributing: usize,
     /// Total token cost: for the mock client this is the sum of
-    /// [`Antecedent::token_weight`]; for real clients it is the upstream
+    /// [`Input::token_weight`]; for real clients it is the upstream
     /// usage report (`input_tokens + output_tokens`) when available,
     /// falling back to the same estimate.
     pub total_tokens: u32,
@@ -128,25 +111,24 @@ pub struct UnifiedScene {
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
-/// Failure modes of the vision pipeline. `#[non_exhaustive]` — match with a
-/// wildcard arm if you want to remain forward-compatible.
+/// Failure modes of the vision pipeline. `#[non_exhaustive]` — match
+/// with a wildcard arm if you want to remain forward-compatible.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum ConcrescenceError {
-    /// Aggregate prehension diameter exceeded the [`SpectralBudget`].
+pub enum VisionError {
+    /// Aggregate input diameter exceeded the [`SpectralBudget`].
     Budget(BudgetError),
-    /// The concrescence was empty — nothing to unify.
-    NoAntecedents,
+    /// The pipeline was run with no inputs.
+    NoInputs,
     /// A required environment variable (API key, base URL override) is
-    /// not set. The `var` field carries the variable name.
+    /// not set.
     MissingEnv {
         /// Name of the environment variable that was expected.
         var: &'static str,
     },
     /// I/O failure reading an input from disk.
     Io(std::io::Error),
-    /// Could not decode an input image. `label` identifies the call site
-    /// (e.g. `"load_image"`, `"anthropic"`, `"runway"`).
+    /// Could not decode an input image.
     ImageDecode {
         /// Call-site label, useful when one pipeline decodes multiple images.
         label: &'static str,
@@ -160,10 +142,10 @@ pub enum ConcrescenceError {
         /// Underlying encoder message, stringified.
         message: String,
     },
-    /// A specific antecedent kind was required but not supplied — e.g.
-    /// `AnthropicVisionClient` needs an [`Antecedent::Image`].
-    MissingAntecedent {
-        /// Kind of antecedent the client required (`"image"`, etc.).
+    /// A specific input kind was required but not supplied — e.g. the
+    /// Anthropic client needs an [`Input::Image`].
+    MissingInput {
+        /// Kind of input the client required (`"image"`, etc.).
         kind: &'static str,
     },
     /// An input payload exceeded its configured byte cap.
@@ -175,200 +157,187 @@ pub enum ConcrescenceError {
         /// Configured ceiling in bytes.
         cap: usize,
     },
-    /// Upstream HTTP / transport-layer failure. Carries status + body
-    /// or the underlying transport error message.
+    /// Upstream HTTP / transport-layer failure.
     Network(String),
 }
 
-impl std::fmt::Display for ConcrescenceError {
+impl std::fmt::Display for VisionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConcrescenceError::Budget(e) => write!(f, "{e}"),
-            ConcrescenceError::NoAntecedents => write!(f, "no antecedents to concresce"),
-            ConcrescenceError::MissingEnv { var } => {
-                write!(f, "environment variable not set: {var}")
-            }
-            ConcrescenceError::Io(e) => write!(f, "i/o: {e}"),
-            ConcrescenceError::ImageDecode { label, message } => {
+            VisionError::Budget(e) => write!(f, "{e}"),
+            VisionError::NoInputs => write!(f, "no inputs to run"),
+            VisionError::MissingEnv { var } => write!(f, "environment variable not set: {var}"),
+            VisionError::Io(e) => write!(f, "i/o: {e}"),
+            VisionError::ImageDecode { label, message } => {
                 write!(f, "image decode ({label}): {message}")
             }
-            ConcrescenceError::ImageEncode { label, message } => {
+            VisionError::ImageEncode { label, message } => {
                 write!(f, "image encode ({label}): {message}")
             }
-            ConcrescenceError::MissingAntecedent { kind } => {
-                write!(f, "required antecedent missing: {kind}")
-            }
-            ConcrescenceError::OversizedInput { kind, bytes, cap } => {
+            VisionError::MissingInput { kind } => write!(f, "required input missing: {kind}"),
+            VisionError::OversizedInput { kind, bytes, cap } => {
                 write!(f, "{kind} oversize: {bytes} bytes > {cap} byte cap")
             }
-            ConcrescenceError::Network(s) => write!(f, "network: {s}"),
+            VisionError::Network(s) => write!(f, "network: {s}"),
         }
     }
 }
 
-impl std::error::Error for ConcrescenceError {
+impl std::error::Error for VisionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            ConcrescenceError::Budget(e) => Some(e),
-            ConcrescenceError::Io(e) => Some(e),
+            VisionError::Budget(e) => Some(e),
+            VisionError::Io(e) => Some(e),
             _ => None,
         }
     }
 }
 
-impl From<BudgetError> for ConcrescenceError {
-    fn from(e: BudgetError) -> Self { ConcrescenceError::Budget(e) }
+impl From<BudgetError> for VisionError {
+    fn from(e: BudgetError) -> Self { VisionError::Budget(e) }
 }
 
-impl From<std::io::Error> for ConcrescenceError {
-    fn from(e: std::io::Error) -> Self { ConcrescenceError::Io(e) }
+impl From<std::io::Error> for VisionError {
+    fn from(e: std::io::Error) -> Self { VisionError::Io(e) }
 }
 
 // ── VisionClient trait ────────────────────────────────────────────────────────
 
-/// The mover that turns a slice of prehensions into a unified satisfaction.
+/// The mover that turns a slice of inputs into a synthesised [`Scene`].
 /// Implement this trait to plug any vision model into the pipeline.
 /// [`MockVisionClient`] is the network-free reference implementation.
 #[async_trait]
 pub trait VisionClient: Send + Sync {
-    async fn synthesize(
-        &self,
-        antecedents: &[Antecedent],
-    ) -> Result<UnifiedScene, ConcrescenceError>;
+    async fn synthesize(&self, inputs: &[Input]) -> Result<Scene, VisionError>;
 }
 
 // ── Mock client ───────────────────────────────────────────────────────────────
 
-/// Deterministic, network-free client. Demonstrates the shape of
-/// satisfaction without requiring API keys. Swap in `AnthropicVisionClient`
-/// (feature `anthropic-vision`) for production use; the rest of the pipeline
-/// is untouched by which client is plugged in.
+/// Deterministic, network-free client. Demonstrates the shape of a
+/// synthesis without requiring API keys. Swap in
+/// `anthropic::AnthropicVisionClient` (feature `anthropic-vision`) for
+/// production use; the rest of the pipeline is untouched.
 pub struct MockVisionClient;
 
 #[async_trait]
 impl VisionClient for MockVisionClient {
-    async fn synthesize(
-        &self,
-        antecedents: &[Antecedent],
-    ) -> Result<UnifiedScene, ConcrescenceError> {
-        if antecedents.is_empty() {
-            return Err(ConcrescenceError::NoAntecedents);
+    async fn synthesize(&self, inputs: &[Input]) -> Result<Scene, VisionError> {
+        if inputs.is_empty() {
+            return Err(VisionError::NoInputs);
         }
-        let mut parts: Vec<String> = Vec::with_capacity(antecedents.len());
+        let mut parts: Vec<String> = Vec::with_capacity(inputs.len());
         let mut total_tokens: u32 = 0;
-        for a in antecedents {
+        for a in inputs {
             total_tokens = total_tokens.saturating_add(a.token_weight());
             parts.push(match a {
-                Antecedent::Image(i) => {
+                Input::Image(i) => {
                     format!("[image {}x{} ~{}tok]", i.width, i.height, i.estimated_tokens)
                 }
-                Antecedent::Ocr(o) => {
+                Input::Ocr(o) => {
                     format!("[ocr conf={:.2}: {:?}]", o.confidence, truncate(&o.text, 64))
                 }
-                Antecedent::Exif(e) => format!("[exif: {} fields]", e.fields.len()),
-                Antecedent::Audio(a) => format!(
+                Input::Exif(e) => format!("[exif: {} fields]", e.fields.len()),
+                Input::Audio(a) => format!(
                     "[audio {:.1}s: {:?}]",
                     a.duration_secs,
                     truncate(&a.transcript, 64)
                 ),
             });
         }
-        Ok(UnifiedScene {
+        Ok(Scene {
             caption: format!(
-                "concresced from {} prehensions: {}",
-                antecedents.len(),
-                parts.join(" ⊕ "),
+                "synthesised from {} inputs: {}",
+                inputs.len(),
+                parts.join(" + "),
             ),
-            contributing: antecedents.len(),
+            contributing: inputs.len(),
             total_tokens,
         })
     }
 }
 
-// ── VisionConcrescence ────────────────────────────────────────────────────────
+// ── VisionPipeline ────────────────────────────────────────────────────────────
 
-pub struct VisionConcrescence {
-    antecedents: Vec<Antecedent>,
+/// Builder-style pipeline: accumulate inputs, then `run` to synthesise
+/// a [`Scene`]. Admission against the [`SpectralBudget`] happens before
+/// the inference call fires, so over-budget runs fail cheaply.
+pub struct VisionPipeline {
+    inputs: Vec<Input>,
     client: Arc<dyn VisionClient>,
     budget: SpectralBudget,
 }
 
-impl VisionConcrescence {
+impl VisionPipeline {
+    /// Create a new pipeline bound to a client and a budget. The client
+    /// is shared (`Arc`) so the same backend can serve many concurrent
+    /// pipelines.
     #[must_use]
     pub fn new(client: Arc<dyn VisionClient>, budget: SpectralBudget) -> Self {
-        Self { antecedents: Vec::new(), client, budget }
+        Self { inputs: Vec::new(), client, budget }
     }
 
+    /// Add one input. Chains for builder-style construction.
     #[must_use]
-    pub fn prehend(mut self, a: Antecedent) -> Self {
-        self.antecedents.push(a);
+    pub fn with(mut self, input: Input) -> Self {
+        self.inputs.push(input);
         self
     }
 
-    fn admit(&self) -> Result<(), ConcrescenceError> {
-        let total: u32 = self
-            .antecedents
-            .iter()
-            .map(|a| a.token_weight())
-            .fold(0u32, |acc, x| acc.saturating_add(x));
-        self.budget.try_admit(total as f64)?;
-        Ok(())
-    }
-}
+    /// View the inputs accumulated so far (e.g. for logging).
+    pub fn inputs(&self) -> &[Input] { &self.inputs }
 
-impl Society for VisionConcrescence {
-    type Member = Antecedent;
-    fn members(&self) -> &[Antecedent] { &self.antecedents }
-    fn diameter(&self) -> f64 {
-        self.antecedents
+    /// Aggregate token diameter of the inputs — the quantity checked
+    /// against the [`SpectralBudget`] in [`Self::run`].
+    pub fn diameter(&self) -> f64 {
+        self.inputs
             .iter()
             .map(|a| a.token_weight() as u64)
             .sum::<u64>() as f64
     }
-}
 
-impl Concrescence for VisionConcrescence {
-    type Antecedent = Antecedent;
-    type Unified = Pin<Box<dyn Future<Output = Result<UnifiedScene, ConcrescenceError>> + Send>>;
+    fn admit(&self) -> Result<(), VisionError> {
+        self.budget.try_admit(self.diameter())?;
+        Ok(())
+    }
 
-    fn prehensions(&self) -> &[Antecedent] { &self.antecedents }
-
-    fn unify(self) -> Self::Unified {
-        Box::pin(async move {
-            self.admit()?;
-            self.client.synthesize(&self.antecedents).await
-        })
+    /// Run the pipeline: admit against the budget, then call the
+    /// client. Errors short-circuit before the network call when the
+    /// budget rejects.
+    pub async fn run(self) -> Result<Scene, VisionError> {
+        self.admit()?;
+        self.client.synthesize(&self.inputs).await
     }
 }
 
-// ── SceneArchive (public world) ───────────────────────────────────────────────
+// ── SceneArchive ──────────────────────────────────────────────────────────────
 
+/// Append-only history of synthesised scenes — useful when chaining
+/// pipelines (each run's caption seeds the next).
 pub struct SceneArchive {
-    scenes: Vec<UnifiedScene>,
+    scenes: Vec<Scene>,
 }
 
 impl SceneArchive {
     pub fn new() -> Self { Self { scenes: Vec::new() } }
+    pub fn push(&mut self, scene: Scene) { self.scenes.push(scene); }
     pub fn len(&self) -> usize { self.scenes.len() }
     pub fn is_empty(&self) -> bool { self.scenes.is_empty() }
-    pub fn last(&self) -> Option<&UnifiedScene> { self.scenes.last() }
-    pub fn iter(&self) -> impl Iterator<Item = &UnifiedScene> { self.scenes.iter() }
+    pub fn last(&self) -> Option<&Scene> { self.scenes.last() }
+    pub fn iter(&self) -> impl Iterator<Item = &Scene> { self.scenes.iter() }
 }
 
 impl Default for SceneArchive {
     fn default() -> Self { Self::new() }
 }
 
-impl PublicWorld for SceneArchive {
-    type Inhabitant = UnifiedScene;
-    fn deposit(&mut self, x: UnifiedScene) { self.scenes.push(x); }
-}
-
 // ── Loaders ───────────────────────────────────────────────────────────────────
 
-pub fn load_image(path: &Path) -> Result<ImagePrehension, ConcrescenceError> {
+/// Load an image from disk into an [`ImageInput`]. Decodes the bytes to
+/// extract width/height for the token-weight estimate; the original
+/// encoded bytes are sent on the wire.
+pub fn load_image(path: &Path) -> Result<ImageInput, VisionError> {
     let raw = std::fs::read(path)?;
-    let img = image::load_from_memory(&raw).map_err(|e| ConcrescenceError::ImageDecode {
+    let img = image::load_from_memory(&raw).map_err(|e| VisionError::ImageDecode {
         label: "load_image",
         message: e.to_string(),
     })?;
@@ -387,7 +356,7 @@ pub fn load_image(path: &Path) -> Result<ImagePrehension, ConcrescenceError> {
     };
     let estimated_tokens =
         ((width as u64 * height as u64) as f32 / 750.0).ceil().max(1.0) as u32;
-    Ok(ImagePrehension {
+    Ok(ImageInput {
         raw_bytes: Arc::new(raw),
         media_type,
         width,
@@ -396,15 +365,20 @@ pub fn load_image(path: &Path) -> Result<ImagePrehension, ConcrescenceError> {
     })
 }
 
-pub fn stub_ocr(_image: &ImagePrehension) -> OcrPrehension {
-    OcrPrehension {
+/// Placeholder OCR for when real OCR isn't wired up — returns a marker
+/// string at confidence 0.0 so the pipeline runs end-to-end without
+/// special-casing the inputs list.
+pub fn stub_ocr(_image: &ImageInput) -> OcrInput {
+    OcrInput {
         text: "(stub OCR — wire tesseract-rs or remote OCR for real text)".into(),
         confidence: 0.0,
     }
 }
 
-pub fn stub_exif(path: &Path) -> ExifPrehension {
-    ExifPrehension {
+/// Placeholder EXIF — emits a minimal `source_path` / `provenance`
+/// pair so the metadata channel exercises end-to-end.
+pub fn stub_exif(path: &Path) -> ExifInput {
+    ExifInput {
         fields: vec![
             ("source_path".into(), path.display().to_string()),
             ("provenance".into(), "stub".into()),
@@ -414,8 +388,8 @@ pub fn stub_exif(path: &Path) -> ExifPrehension {
 
 /// Cap an inline image payload under `max_bytes`. Returns the bytes
 /// borrowed when they already fit (zero copy), or a JPEG re-encode
-/// downscaled to `max_side` on the longest axis when they don't.
-/// Used by the Anthropic and Runway clients before base64-encoding.
+/// downscaled to `max_side` on the longest axis when they don't. Used
+/// by the Anthropic and Runway clients before base64-encoding.
 #[cfg(any(feature = "anthropic-vision", feature = "runway-video"))]
 pub fn cap_image<'a>(
     bytes: &'a [u8],
@@ -423,11 +397,11 @@ pub fn cap_image<'a>(
     max_bytes: usize,
     max_side: u32,
     label: &'static str,
-) -> Result<(std::borrow::Cow<'a, [u8]>, &'static str), ConcrescenceError> {
+) -> Result<(std::borrow::Cow<'a, [u8]>, &'static str), VisionError> {
     if bytes.len() <= max_bytes {
         return Ok((std::borrow::Cow::Borrowed(bytes), media_type));
     }
-    let decoded = image::load_from_memory(bytes).map_err(|e| ConcrescenceError::ImageDecode {
+    let decoded = image::load_from_memory(bytes).map_err(|e| VisionError::ImageDecode {
         label,
         message: e.to_string(),
     })?;
@@ -435,7 +409,7 @@ pub fn cap_image<'a>(
     let mut buf: Vec<u8> = Vec::new();
     thumb
         .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
-        .map_err(|e| ConcrescenceError::ImageEncode {
+        .map_err(|e| VisionError::ImageEncode {
             label,
             message: e.to_string(),
         })?;

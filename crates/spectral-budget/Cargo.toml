@@ -1,0 +1,19 @@
+[package]
+name        = "spectral-budget"
+version     = "0.1.0"
+description = "A Faber-Krahn-derived budget primitive for token windows, time horizons, or any bounded sequential domain."
+keywords    = ["budget", "tokens", "rate-limit", "eigenvalue", "physics"]
+categories  = ["mathematics", "algorithms"]
+readme      = "README.md"
+
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+
+[dev-dependencies]
+hound = "3.5"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]

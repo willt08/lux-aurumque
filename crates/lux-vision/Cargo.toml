@@ -1,0 +1,38 @@
+[package]
+name        = "lux-vision"
+version     = "0.1.0"
+description = "Pluggable multimodal vision pipeline with token-budget admission; Claude and Runway backends."
+keywords    = ["vision", "claude", "runway", "video", "ai"]
+categories  = ["multimedia", "api-bindings", "asynchronous"]
+readme      = "README.md"
+
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+
+[features]
+anthropic-vision = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:base64"]
+runway-video     = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:base64", "dep:tokio"]
+# Convenience alias: enable both backend clients.
+full             = ["anthropic-vision", "runway-video"]
+
+[dependencies]
+spectral-budget = { version = "0.1", path = "../spectral-budget" }
+async-trait     = "0.1"
+image           = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+reqwest    = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde      = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+base64     = { version = "0.22", optional = true }
+tokio      = { version = "1", features = ["time"], optional = true }
+
+[dev-dependencies]
+tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
+dotenvy = "0.15"
+
+[package.metadata.docs.rs]
+features = ["full"]
+rustdoc-args = ["--cfg", "docsrs"]

@@ -1,15 +1,24 @@
-//! receptacle — the Platonic χώρα.
+//! receptacle — the Platonic χώρα. **Conceptual artifact, not a
+//! compiled crate member.**
 //!
-//! In *Timaeus* 49a–52d, Plato names a third nature alongside Being and
-//! Becoming: the **receptacle**, the substrate that takes on Forms without
-//! being them. This file is one such receptacle: a runnable blueprint
-//! that takes on the process traits of `lux_aurumque` and applies them to
-//! a domain other than light — a vision-API substrate.
+//! This file lives in `essays/` rather than `examples/` because it is
+//! the *thinking that produced the workspace*, not a runnable
+//! demonstration of the API. It references an earlier register
+//! (`lux_aurumque::process::{Occasion, ...}`) that no longer ships
+//! verbatim — the traits it builds on lived in v0.2.0's `process.rs`,
+//! which has been distilled into the standalone `spectral-budget`
+//! crate (the load-bearing primitive) and otherwise retired.
+//!
+//! In *Timaeus* 49a–52d, Plato names a third nature alongside Being
+//! and Becoming: the **receptacle**, the substrate that takes on Forms
+//! without being them. This file is one such receptacle: a blueprint
+//! that took on the process traits of an earlier `lux-aurumque` and
+//! applied them to a vision-API substrate. Read it as the philosophical
+//! register behind the engineering — and `crates/lux-vision/` as the
+//! engineering register the philosophy authorised.
 //!
 //! "That which is above is like that which is below." — Hermes Trismegistus
 //! Willinton Triana Cardona / 3BSN LLC
-//!
-//! Build: `cargo run --example receptacle`
 //!
 //! Layout follows the six sections of the original `template.ts`:
 //!   I.   The Prime Monad        — Being, Becoming, Context, Mapper
@@ -18,6 +27,8 @@
 //!   IV.  The Eternal Return     — RecursiveContextTemplate (constraints)
 //!   V.   Coincidentia Oppositorum — DialecticalContext (synthesis)
 //!   VI.  Usage                  — VisionRequest substrate
+
+#![allow(dead_code, unused_imports)]
 
 use lux_aurumque::process::{
     BudgetError, Occasion, SpectralBudget,

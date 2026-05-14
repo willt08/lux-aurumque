@@ -79,9 +79,9 @@ impl TransientFrame {
     }
 
     /// Accumulate a contribution into bin `bin` at pixel (x, y). The
-    /// inherent fast path — used by `trace_path` and `merge_tile`. The
-    /// trait method [`crate::process::PublicWorld::deposit`] wraps this
-    /// with a typed [`Deposit`] value for downstream consumers.
+    /// inherent fast path — used by `trace_path` and `merge_tile`.
+    /// See [`Deposit`] and [`TransientFrame::deposit`] for the typed
+    /// API when integrating downstream.
     #[inline]
     pub fn accumulate(&mut self, bin: usize, x: usize, y: usize, color: Vec3) {
         if bin >= self.num_bins { return; }
@@ -229,11 +229,8 @@ pub fn trace_path(
 // Process-spine impls. (See NOTES_PROCESS.md §1.)
 // ----------------------------------------------------------------------------
 
-/// One contribution to the time-resolved framebuffer: a path's perished
-/// satisfaction, addressed by pixel and bin. The newtype [`PublicWorld`]
-/// quantifies over.
-///
-/// [`PublicWorld`]: crate::process::PublicWorld
+/// One contribution to the time-resolved framebuffer: a path's
+/// satisfaction, addressed by pixel and bin.
 #[derive(Clone, Copy, Debug)]
 pub struct Deposit {
     pub pixel: (usize, usize),
@@ -241,27 +238,11 @@ pub struct Deposit {
     pub color: Vec3,
 }
 
-impl crate::process::PublicWorld for TransientFrame {
-    type Inhabitant = Deposit;
-    fn deposit(&mut self, d: Deposit) {
+impl TransientFrame {
+    /// Typed deposit point — wraps [`Self::accumulate`] with a structured
+    /// [`Deposit`] value. Useful when threading the framebuffer through
+    /// a generic consumer.
+    pub fn deposit(&mut self, d: Deposit) {
         self.accumulate(d.bin, d.pixel.0, d.pixel.1, d.color);
-    }
-}
-
-/// A backward-traced path: the personally ordered society of ray segments
-/// from the sensor through to a terminal emissive hit. Diameter is the
-/// cumulative `path_length` at the final segment — the metric bounded by
-/// [`SpectralBudget`].
-///
-/// [`SpectralBudget`]: crate::process::SpectralBudget
-pub struct Path {
-    pub segments: Vec<Ray>,
-}
-
-impl crate::process::Society for Path {
-    type Member = Ray;
-    fn members(&self) -> &[Ray] { &self.segments }
-    fn diameter(&self) -> f64 {
-        self.segments.last().map(|r| r.path_length as f64).unwrap_or(0.0)
     }
 }

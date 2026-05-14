@@ -1,8 +1,8 @@
-//! concrescence — the many becoming one. PR III.I.
+//! concrescence — pipeline orchestrator example.
 //!
-//! CLI orchestrator for the vision pipeline. All types and clients
-//! live in the library (`lux_aurumque::{vision, anthropic, runway, shape}`);
-//! this file wires them into a runnable program.
+//! CLI driving `lux-vision`. All types and clients live in the library
+//! (`lux_vision::{pipeline, anthropic, runway, shape}`); this file
+//! wires them into a runnable program.
 //!
 //! Modes (selected automatically by the arguments provided):
 //!
@@ -19,26 +19,27 @@
 //!     cargo run --example concrescence -- <image.png>
 //!
 //! Build (full pipeline):
-//!     cargo run --example concrescence --features runaway-hackathon -- <image.png>
+//!     cargo run --example concrescence --features full -- <image.png>
 
 use std::path::PathBuf;
 #[cfg(feature = "runway-video")]
 use std::path::Path;
 use std::sync::Arc;
 
-use lux_aurumque::{
-    Antecedent, Concrescence, MockVisionClient, PublicWorld, SceneArchive, Society,
-    SpectralBudget, VisionClient, VisionConcrescence, load_image, stub_exif, stub_ocr,
+use spectral_budget::SpectralBudget;
+use lux_vision::{
+    Input, MockVisionClient, SceneArchive, VisionClient, VisionPipeline,
+    load_image, stub_exif, stub_ocr,
 };
 
 #[cfg(feature = "anthropic-vision")]
-use lux_aurumque::anthropic::AnthropicVisionClient;
+use lux_vision::anthropic::AnthropicVisionClient;
 
 #[cfg(feature = "runway-video")]
-use lux_aurumque::runway::{CharacterPerformanceConfig, RunwayVideoClient, TaskHandle};
+use lux_vision::runway::{CharacterPerformanceConfig, RunwayVideoClient, TaskHandle};
 
 #[cfg(feature = "runway-video")]
-use lux_aurumque::shape::PromptShape;
+use lux_vision::shape::PromptShape;
 
 // ── Directives for parallel character + loci extraction ──────────────────────
 
@@ -173,7 +174,7 @@ fn extract_final_frame(mp4_path: &Path) -> Result<PathBuf, Box<dyn std::error::E
 #[cfg(feature = "runway-video")]
 fn extract_and_load_final_frame(
     mp4_path: &Path,
-) -> Result<lux_aurumque::ImagePrehension, Box<dyn std::error::Error>> {
+) -> Result<lux_vision::ImageInput, Box<dyn std::error::Error>> {
     eprintln!("[vision] extracting final frame via ffmpeg…");
     let frame_path = extract_final_frame(mp4_path)?;
     let frame = load_image(&frame_path)?;
@@ -191,7 +192,7 @@ fn extract_and_load_final_frame(
 
 /// `--continue-from <task-id>`: download the prior Runway task's output,
 /// extract the final frame, then call `continue_from_frame`.
-#[cfg(feature = "runaway-hackathon")]
+#[cfg(feature = "full")]
 async fn continue_from_run(
     prior_task_id: String,
     prompt_shape: Option<PromptShape>,
@@ -218,9 +219,9 @@ async fn continue_from_run(
 
 /// Core continuation: extract character + loci from `frame` via Claude,
 /// compose with `prompt_shape` directive, submit image_to_video.
-#[cfg(feature = "runaway-hackathon")]
+#[cfg(feature = "full")]
 async fn continue_from_frame(
-    frame: lux_aurumque::ImagePrehension,
+    frame: lux_vision::ImageInput,
     prior_label: &str,
     prompt_shape: Option<PromptShape>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -280,7 +281,7 @@ async fn continue_from_frame(
 /// `--continue-from-file <path.mp4>`:
 ///   with `--prompt-shape` → image_to_video (Claude extraction + shape directive)
 ///   without               → character_performance (motion transfer, no prompt)
-#[cfg(feature = "runaway-hackathon")]
+#[cfg(feature = "full")]
 async fn continue_from_file_run(
     mp4_path: PathBuf,
     prompt_shape: Option<PromptShape>,
@@ -386,7 +387,7 @@ async fn continue_from_file_run(
 
 /// `--prompt-shape <shape>` with a path arg: image anchors the visual
 /// identity; the shape preset drives motion. Claude describe leg skipped.
-#[cfg(feature = "runaway-hackathon")]
+#[cfg(feature = "full")]
 async fn image_shape_run(
     path: PathBuf,
     shape: PromptShape,
@@ -541,13 +542,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     #[cfg(not(feature = "runway-video"))]
     if shape_arg.is_some() {
-        return Err("--prompt-shape requires --features runway-video (or runaway-hackathon)".into());
+        return Err("--prompt-shape requires --features runway-video (or full)".into());
     }
 
-    #[cfg(not(feature = "runaway-hackathon"))]
+    #[cfg(not(feature = "full"))]
     if continue_from.is_some() || continue_from_file.is_some() {
         return Err(
-            "--continue-from / --continue-from-file require --features runaway-hackathon".into(),
+            "--continue-from / --continue-from-file require --features full".into(),
         );
     }
 
@@ -555,7 +556,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("--continue-from and --continue-from-file are mutually exclusive".into());
     }
 
-    #[cfg(feature = "runaway-hackathon")]
+    #[cfg(feature = "full")]
     if let Some(prior_id) = continue_from {
         if path_arg.is_some() {
             return Err("--continue-from takes its frame from the prior task; omit <image.png>".into());
@@ -563,7 +564,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return continue_from_run(prior_id, prompt_shape).await;
     }
 
-    #[cfg(feature = "runaway-hackathon")]
+    #[cfg(feature = "full")]
     if let Some(file) = continue_from_file {
         if path_arg.is_some() {
             return Err("--continue-from-file takes its frame from the mp4; omit <image.png>".into());
@@ -576,7 +577,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return text_only_run(prompt_shape).await;
     }
 
-    #[cfg(feature = "runaway-hackathon")]
+    #[cfg(feature = "full")]
     if let (Some(p), Some(shape)) = (path_arg.as_ref(), prompt_shape) {
         return image_shape_run(PathBuf::from(p), shape).await;
     }
@@ -598,24 +599,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = build_client();
     let mut archive = SceneArchive::new();
 
-    let concrescence = VisionConcrescence::new(client, budget)
-        .prehend(Antecedent::Image(image))
-        .prehend(Antecedent::Ocr(ocr))
-        .prehend(Antecedent::Exif(exif));
+    let pipeline = VisionPipeline::new(client, budget)
+        .with(Input::Image(image))
+        .with(Input::Ocr(ocr))
+        .with(Input::Exif(exif));
 
     println!(
-        "Concrescence prepared: {} prehensions, diameter = {:.0} tokens",
-        Concrescence::prehensions(&concrescence).len(),
-        Society::diameter(&concrescence),
+        "Pipeline prepared: {} inputs, diameter = {:.0} tokens",
+        pipeline.inputs().len(),
+        pipeline.diameter(),
     );
 
-    match concrescence.unify().await {
+    match pipeline.run().await {
         Ok(scene) => {
             println!("Satisfied:");
             println!("  contributing : {}", scene.contributing);
             println!("  total_tokens : {}", scene.total_tokens);
             println!("  caption      : {}", scene.caption);
-            archive.deposit(scene);
+            archive.push(scene);
             println!("Public world holds {} scene(s).", archive.len());
 
             #[cfg(feature = "runway-video")]

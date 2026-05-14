@@ -6,8 +6,12 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 
-use crate::vision::{ConcrescenceError, cap_image};
+use crate::pipeline::{VisionError, cap_image};
 
+/// Runway video client. Talks to three endpoints: `text_to_video`,
+/// `image_to_video`, and `character_performance`. Each submission
+/// returns a [`TaskHandle` ] that the caller polls (or hands to
+/// [`Self::wait_for_completion`]).
 pub struct RunwayVideoClient {
     api_key: String,
     model: String,
@@ -18,9 +22,9 @@ pub struct RunwayVideoClient {
 impl RunwayVideoClient {
     /// `default_model` is used when `LUX_VIDEO_MODEL` is unset.
     /// Image paths default to `gen4_turbo`; text-only paths to `veo3.1_fast`.
-    pub fn from_env(default_model: &str) -> Result<Self, ConcrescenceError> {
+    pub fn from_env(default_model: &str) -> Result<Self, VisionError> {
         let api_key = std::env::var("RUNWAY_API_KEY")
-            .map_err(|_| ConcrescenceError::MissingEnv { var: "RUNWAY_API_KEY" })?;
+            .map_err(|_| VisionError::MissingEnv { var: "RUNWAY_API_KEY" })?;
         let model =
             std::env::var("LUX_VIDEO_MODEL").unwrap_or_else(|_| default_model.into());
         let base_url = std::env::var("LUX_RUNWAY_BASE_URL")
@@ -37,7 +41,7 @@ impl RunwayVideoClient {
         ratio: &str,
         duration_secs: u32,
         audio: bool,
-    ) -> Result<TaskHandle, ConcrescenceError> {
+    ) -> Result<TaskHandle, VisionError> {
         const MAX: usize = 1000;
         let prompt = truncate_prompt(prompt, MAX);
         let body = TextRequest {
@@ -61,7 +65,7 @@ impl RunwayVideoClient {
         ratio: &str,
         duration_secs: u32,
         audio: bool,
-    ) -> Result<TaskHandle, ConcrescenceError> {
+    ) -> Result<TaskHandle, VisionError> {
         const IMG_LIMIT: usize = (3.33 * 1024.0 * 1024.0) as usize;
         const IMG_MAX_SIDE: u32 = 2048;
         let (capped, mime) =
@@ -83,16 +87,17 @@ impl RunwayVideoClient {
     }
 
     /// Submit a character-performance task. Transfers the motion and
-    /// expressions of `cfg.reference_video_bytes` onto the appearance of
-    /// `cfg.character_image_bytes`. The model is supplied via
+    /// expressions of `cfg.reference_video_bytes` onto the appearance
+    /// of `cfg.character_image_bytes`. The model is supplied via
     /// [`CharacterPerformanceConfig`] — this endpoint uses a disjoint
     /// model namespace (`act_two`) from text/image routes, so
-    /// `LUX_VIDEO_MODEL` must not bleed in here. Reference video is capped
-    /// at 15 MB by default; override with `LUX_RUNWAY_VIDEO_MAX_BYTES`.
+    /// `LUX_VIDEO_MODEL` must not bleed in here. Reference video is
+    /// capped at 15 MB by default; override with
+    /// `LUX_RUNWAY_VIDEO_MAX_BYTES`.
     pub async fn character_performance(
         &self,
         cfg: CharacterPerformanceConfig<'_>,
-    ) -> Result<TaskHandle, ConcrescenceError> {
+    ) -> Result<TaskHandle, VisionError> {
         const IMG_LIMIT: usize = (3.33 * 1024.0 * 1024.0) as usize;
         const IMG_MAX_SIDE: u32 = 2048;
         let (cap_char, cap_mime) = cap_image(
@@ -110,7 +115,7 @@ impl RunwayVideoClient {
             .and_then(|s| s.parse().ok())
             .unwrap_or(15 * 1024 * 1024);
         if cfg.reference_video_bytes.len() > max_video {
-            return Err(ConcrescenceError::OversizedInput {
+            return Err(VisionError::OversizedInput {
                 kind: "reference_video",
                 bytes: cfg.reference_video_bytes.len(),
                 cap: max_video,
@@ -137,7 +142,7 @@ impl RunwayVideoClient {
     }
 
     /// Poll a task once by id.
-    pub async fn get_task(&self, task_id: &str) -> Result<TaskHandle, ConcrescenceError> {
+    pub async fn get_task(&self, task_id: &str) -> Result<TaskHandle, VisionError> {
         let resp = self
             .http
             .get(format!("{}/v1/tasks/{}", self.base_url, task_id))
@@ -145,15 +150,15 @@ impl RunwayVideoClient {
             .header("X-Runway-Version", "2024-11-06")
             .send()
             .await
-            .map_err(|e| ConcrescenceError::Network(e.to_string()))?;
+            .map_err(|e| VisionError::Network(e.to_string()))?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(ConcrescenceError::Network(format!("{status}: {body}")));
+            return Err(VisionError::Network(format!("{status}: {body}")));
         }
         resp.json::<TaskHandle>()
             .await
-            .map_err(|e| ConcrescenceError::Network(format!("decode: {e}")))
+            .map_err(|e| VisionError::Network(format!("decode: {e}")))
     }
 
     /// Block until the task reaches a terminal state (SUCCEEDED, FAILED,
@@ -161,13 +166,13 @@ impl RunwayVideoClient {
     pub async fn wait_for_completion(
         &self,
         task_id: &str,
-    ) -> Result<TaskHandle, ConcrescenceError> {
+    ) -> Result<TaskHandle, VisionError> {
         let deadline = std::time::Duration::from_secs(600);
         let interval = std::time::Duration::from_secs(5);
         let started = std::time::Instant::now();
         loop {
             if started.elapsed() > deadline {
-                return Err(ConcrescenceError::Network(format!(
+                return Err(VisionError::Network(format!(
                     "task {task_id}: timeout after {deadline:?}"
                 )));
             }
@@ -175,7 +180,7 @@ impl RunwayVideoClient {
             match task.status.as_deref().unwrap_or("") {
                 "SUCCEEDED" => return Ok(task),
                 "FAILED" | "CANCELLED" => {
-                    return Err(ConcrescenceError::Network(format!(
+                    return Err(VisionError::Network(format!(
                         "task {task_id}: {} ({})",
                         task.status.as_deref().unwrap_or(""),
                         task.failure.unwrap_or_default(),
@@ -194,7 +199,7 @@ impl RunwayVideoClient {
         &self,
         path: &str,
         body: &B,
-    ) -> Result<TaskHandle, ConcrescenceError> {
+    ) -> Result<TaskHandle, VisionError> {
         let resp = self
             .http
             .post(format!("{}{}", self.base_url, path))
@@ -204,23 +209,24 @@ impl RunwayVideoClient {
             .json(body)
             .send()
             .await
-            .map_err(|e| ConcrescenceError::Network(e.to_string()))?;
+            .map_err(|e| VisionError::Network(e.to_string()))?;
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(ConcrescenceError::Network(format!("{status}: {text}")));
+            return Err(VisionError::Network(format!("{status}: {text}")));
         }
         resp.json::<TaskHandle>()
             .await
-            .map_err(|e| ConcrescenceError::Network(format!("decode: {e}")))
+            .map_err(|e| VisionError::Network(format!("decode: {e}")))
     }
 }
 
 /// Configuration for [`RunwayVideoClient::character_performance`].
 ///
 /// `model` must be from the character-performance namespace (currently
-/// `act_two`). Use `LUX_CHARACTER_PERFORMANCE_MODEL` to override at runtime
-/// rather than `LUX_VIDEO_MODEL`, which addresses a disjoint endpoint.
+/// `act_two`). Use `LUX_CHARACTER_PERFORMANCE_MODEL` to override at
+/// runtime rather than `LUX_VIDEO_MODEL`, which addresses a disjoint
+/// endpoint.
 pub struct CharacterPerformanceConfig<'a> {
     /// Runway model id for the character-performance endpoint. Use
     /// `"act_two"` unless Runway publishes a newer namespace entry.
@@ -239,14 +245,13 @@ pub struct CharacterPerformanceConfig<'a> {
     /// MIME type of `reference_video_bytes`, e.g. `"video/mp4"`.
     pub reference_media_type: &'static str,
     /// Output aspect ratio as `"WIDTH:HEIGHT"` in pixels, e.g.
-    /// `"1280:720"`, `"768:1280"`, `"960:960"`. See Runway's
-    /// character-performance docs for the supported set.
+    /// `"1280:720"`, `"768:1280"`, `"960:960"`.
     pub ratio: &'a str,
     /// `true` to transfer body movement from the reference video;
     /// `false` to limit transfer to facial expression only.
     pub body_control: bool,
-    /// Expression intensity in the range `0..=10`. Higher values amplify
-    /// facial motion from the reference video.
+    /// Expression intensity in the range `0..=10`. Higher values
+    /// amplify facial motion from the reference video.
     pub expression_intensity: u8,
     /// Content-moderation gate for public-figure resemblance. Accepted
     /// values: `"low"`, `"auto"`, `"high"`. Defaults to the
@@ -255,18 +260,15 @@ pub struct CharacterPerformanceConfig<'a> {
 }
 
 /// A Runway task returned by `POST /v1/{endpoint}` and `GET /v1/tasks/{id}`.
-/// All fields beyond `id` are optional so the client tolerates schema drift
-/// (new statuses, additional output entries, partial responses).
+/// All fields beyond `id` are optional so the client tolerates schema
+/// drift.
 #[derive(Debug, Deserialize)]
 pub struct TaskHandle {
-    /// Server-assigned task identifier. Use with
-    /// [`RunwayVideoClient::get_task`] and
-    /// [`RunwayVideoClient::wait_for_completion`].
+    /// Server-assigned task identifier.
     pub id: String,
     /// Current task state. Known values: `"PENDING"`, `"RUNNING"`,
     /// `"THROTTLED"`, `"SUCCEEDED"`, `"FAILED"`, `"CANCELLED"`. Treat
-    /// unknown values as "still running" — Runway adds states without
-    /// notice.
+    /// unknown values as "still running".
     #[serde(default)]
     pub status: Option<String>,
     /// Output artefact URLs (typically a single signed video URL) once

@@ -7,10 +7,11 @@ use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 
-use crate::vision::{
-    Antecedent, ConcrescenceError, UnifiedScene, VisionClient, cap_image,
-};
+use crate::pipeline::{Input, Scene, VisionClient, VisionError, cap_image};
 
+/// Anthropic Claude vision client. Implements [`VisionClient`] and adds
+/// two helpers (`describe_image`, `translate_nexus`) used by the
+/// `lux-vision` example pipeline for chained video continuation.
 pub struct AnthropicVisionClient {
     api_key: String,
     model: String,
@@ -19,9 +20,9 @@ pub struct AnthropicVisionClient {
 }
 
 impl AnthropicVisionClient {
-    pub fn from_env() -> Result<Self, ConcrescenceError> {
+    pub fn from_env() -> Result<Self, VisionError> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| ConcrescenceError::MissingEnv { var: "ANTHROPIC_API_KEY" })?;
+            .map_err(|_| VisionError::MissingEnv { var: "ANTHROPIC_API_KEY" })?;
         let model = std::env::var("LUX_VISION_MODEL")
             .unwrap_or_else(|_| "claude-sonnet-4-6".into());
         Ok(Self { api_key, model, max_tokens: 1024, http: reqwest::Client::new() })
@@ -34,7 +35,7 @@ impl AnthropicVisionClient {
         image_bytes: &[u8],
         media_type: &'static str,
         directive: &str,
-    ) -> Result<String, ConcrescenceError> {
+    ) -> Result<String, VisionError> {
         const LIMIT: usize = 5 * 1024 * 1024;
         const MAX_SIDE: u32 = 1568;
         let (payload, mime) = cap_image(image_bytes, media_type, LIMIT, MAX_SIDE, "anthropic")?;
@@ -63,7 +64,7 @@ impl AnthropicVisionClient {
         &self,
         nexus_json: &str,
         relations: &str,
-    ) -> Result<String, ConcrescenceError> {
+    ) -> Result<String, VisionError> {
         let prompt = format!(
             "Translate this structured scene description into a single-paragraph \
              video-generation prompt for a text-conditioned video diffusion model.\n\n\
@@ -89,7 +90,7 @@ impl AnthropicVisionClient {
         self.post_text(&body).await
     }
 
-    async fn post_text(&self, body: &Request<'_>) -> Result<String, ConcrescenceError> {
+    async fn post_text(&self, body: &Request<'_>) -> Result<String, VisionError> {
         let resp = self
             .http
             .post("https://api.anthropic.com/v1/messages")
@@ -99,16 +100,16 @@ impl AnthropicVisionClient {
             .json(body)
             .send()
             .await
-            .map_err(|e| ConcrescenceError::Network(e.to_string()))?;
+            .map_err(|e| VisionError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(ConcrescenceError::Network(format!("{status}: {body}")));
+            return Err(VisionError::Network(format!("{status}: {body}")));
         }
 
         let parsed: Response =
-            resp.json().await.map_err(|e| ConcrescenceError::Network(format!("decode: {e}")))?;
+            resp.json().await.map_err(|e| VisionError::Network(format!("decode: {e}")))?;
 
         Ok(parsed
             .content
@@ -121,27 +122,27 @@ impl AnthropicVisionClient {
             .to_string())
     }
 
-    fn render_prompt(antecedents: &[Antecedent]) -> String {
+    fn render_prompt(inputs: &[Input]) -> String {
         let mut p = String::from(
-            "You receive an image alongside auxiliary prehensions \
+            "You receive an image alongside auxiliary inputs \
              (OCR text, EXIF metadata, optional audio transcript). \
              Synthesize one concise scene description that incorporates \
              all sources. Note any tensions between them.\n\n",
         );
-        for a in antecedents {
+        for a in inputs {
             match a {
-                Antecedent::Image(_) => {}
-                Antecedent::Ocr(o) => {
+                Input::Image(_) => {}
+                Input::Ocr(o) => {
                     p.push_str(&format!("OCR (confidence {:.2}):\n{}\n\n", o.confidence, o.text));
                 }
-                Antecedent::Exif(e) => {
+                Input::Exif(e) => {
                     p.push_str("EXIF:\n");
                     for (k, v) in &e.fields {
                         p.push_str(&format!("  {k} = {v}\n"));
                     }
                     p.push('\n');
                 }
-                Antecedent::Audio(au) => {
+                Input::Audio(au) => {
                     p.push_str(&format!(
                         "Audio transcript ({:.1}s):\n{}\n\n",
                         au.duration_secs, au.transcript
@@ -155,27 +156,24 @@ impl AnthropicVisionClient {
 
 #[async_trait]
 impl VisionClient for AnthropicVisionClient {
-    async fn synthesize(
-        &self,
-        antecedents: &[Antecedent],
-    ) -> Result<UnifiedScene, ConcrescenceError> {
-        if antecedents.is_empty() {
-            return Err(ConcrescenceError::NoAntecedents);
+    async fn synthesize(&self, inputs: &[Input]) -> Result<Scene, VisionError> {
+        if inputs.is_empty() {
+            return Err(VisionError::NoInputs);
         }
-        let image = antecedents
+        let image = inputs
             .iter()
             .find_map(|a| match a {
-                Antecedent::Image(i) => Some(i),
+                Input::Image(i) => Some(i),
                 _ => None,
             })
-            .ok_or(ConcrescenceError::MissingAntecedent { kind: "image" })?;
+            .ok_or(VisionError::MissingInput { kind: "image" })?;
 
         const LIMIT: usize = 5 * 1024 * 1024;
         const MAX_SIDE: u32 = 1568;
         let (payload, mime) =
             cap_image(image.raw_bytes.as_slice(), image.media_type, LIMIT, MAX_SIDE, "anthropic")?;
         let b64 = STANDARD.encode(payload.as_ref());
-        let prompt = Self::render_prompt(antecedents);
+        let prompt = Self::render_prompt(inputs);
 
         let body = Request {
             model: &self.model,
@@ -200,16 +198,16 @@ impl VisionClient for AnthropicVisionClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ConcrescenceError::Network(e.to_string()))?;
+            .map_err(|e| VisionError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(ConcrescenceError::Network(format!("{status}: {body}")));
+            return Err(VisionError::Network(format!("{status}: {body}")));
         }
 
         let parsed: Response =
-            resp.json().await.map_err(|e| ConcrescenceError::Network(format!("decode: {e}")))?;
+            resp.json().await.map_err(|e| VisionError::Network(format!("decode: {e}")))?;
 
         let caption = parsed
             .content
@@ -222,9 +220,9 @@ impl VisionClient for AnthropicVisionClient {
         let total_tokens = parsed
             .usage
             .map(|u| u.input_tokens.saturating_add(u.output_tokens))
-            .unwrap_or_else(|| antecedents.iter().map(|a| a.token_weight()).sum());
+            .unwrap_or_else(|| inputs.iter().map(|a| a.token_weight()).sum());
 
-        Ok(UnifiedScene { caption, contributing: antecedents.len(), total_tokens })
+        Ok(Scene { caption, contributing: inputs.len(), total_tokens })
     }
 }
 
