@@ -52,9 +52,15 @@ pub const C: f32 = 2.998e8;
 
 // ---- transient framebuffer --------------------------------------------------
 
+/// A 3-D time-resolved framebuffer: `(num_bins, height, width)` of
+/// linear-RGB radiance, addressable as a histogram of arrival times per
+/// pixel. The headline data structure for transient rendering.
 pub struct TransientFrame {
+    /// Image width in pixels.
     pub width: usize,
+    /// Image height in pixels.
     pub height: usize,
+    /// Number of time bins along the temporal axis.
     pub num_bins: usize,
     /// Bin width in seconds. With `dt = 1e-11` (10 ps) and 256 bins, we cover
     /// 2.56 ns of propagation — enough for ~76 cm of total path length, which
@@ -66,6 +72,8 @@ pub struct TransientFrame {
 }
 
 impl TransientFrame {
+    /// Allocate a zeroed framebuffer of `width × height × num_bins` with
+    /// time-bin width `dt` seconds.
     pub fn new(width: usize, height: usize, num_bins: usize, dt: f32) -> Self {
         Self {
             width, height, num_bins, dt,
@@ -118,6 +126,9 @@ impl TransientFrame {
         }
     }
 
+    /// Multiply every stored radiance value by `k`. Used for SPP
+    /// normalisation: divide the accumulated buffer by the number of
+    /// samples per pixel before tone-mapping.
     pub fn scale(&mut self, k: f32) { for v in &mut self.data { *v *= k; } }
 }
 
@@ -130,6 +141,7 @@ impl TransientFrame {
 /// (a few picoseconds) so it spans multiple bins and produces visibly smooth
 /// wavefronts at our temporal resolution.
 pub struct Pulse {
+    /// Standard deviation of the Gaussian envelope, in seconds.
     pub sigma: f32,
 }
 
@@ -233,8 +245,12 @@ pub fn trace_path(
 /// satisfaction, addressed by pixel and bin.
 #[derive(Clone, Copy, Debug)]
 pub struct Deposit {
+    /// `(x, y)` pixel coordinate.
     pub pixel: (usize, usize),
+    /// Time bin to credit.
     pub bin: usize,
+    /// Linear-RGB radiance to add (already scaled by throughput and
+    /// pulse weight).
     pub color: Vec3,
 }
 

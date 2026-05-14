@@ -14,12 +14,26 @@ use crate::vec3::{near_zero, random_unit_vec, reflect, Vec3};
 
 use rand_xoshiro::Xoshiro256PlusPlus;
 
+/// Outcome of a material's `scatter` call: the outgoing ray and the
+/// throughput multiplier applied to subsequent radiance along it.
 pub struct Scatter {
+    /// The outgoing ray. Origin sits at the hit point; direction is
+    /// material-dependent (cosine-weighted for Lambertian, mirror for
+    /// Metal, etc.). `path_length` carries the cumulative optical length
+    /// forward so the transient integrator can time-bin correctly.
     pub scattered: Ray,
+    /// Multiplicative attenuation applied to the radiance returned by
+    /// the recursive trace. RGB albedo for diffuse/specular surfaces.
     pub attenuation: Vec3,
 }
 
+/// How a surface scatters or emits light. `scatter` produces an
+/// outgoing ray and an attenuation; `emitted` returns surface emission
+/// (zero for non-emissive materials).
 pub trait Material: Send + Sync {
+    /// Given an incoming ray and the hit it produced, return a
+    /// scattered ray + attenuation. `None` terminates the path —
+    /// e.g. a pure light source absorbs whatever strikes it.
     fn scatter(
         &self,
         ray_in: &Ray,
@@ -35,9 +49,17 @@ pub trait Material: Send + Sync {
 // Lambertian — ideal diffuse. Cosine-weighted hemisphere sampling.
 // ---------------------------------------------------------------------------
 
-pub struct Lambertian { pub albedo: Vec3 }
+/// Ideal diffuse material — cosine-weighted hemisphere scattering. The
+/// `albedo` is the fraction of incoming radiance reflected (per
+/// channel); values in `[0, 1]`.
+pub struct Lambertian {
+    /// Reflectance in linear RGB. `(1, 1, 1)` is perfectly diffuse
+    /// white; `(0, 0, 0)` is a black hole.
+    pub albedo: Vec3,
+}
 
 impl Lambertian {
+    /// Construct a Lambertian surface with the given albedo.
     pub fn new(albedo: Vec3) -> Self { Self { albedo } }
 }
 
@@ -63,9 +85,19 @@ impl Material for Lambertian {
 // Metal — perfect reflection with optional fuzz.
 // ---------------------------------------------------------------------------
 
-pub struct Metal { pub albedo: Vec3, pub fuzz: f32 }
+/// Specular metal — mirror reflection with an optional fuzz term that
+/// perturbs the reflected direction. `fuzz = 0` is a perfect mirror;
+/// `fuzz = 1` is a fully blurred reflection.
+pub struct Metal {
+    /// Reflectance in linear RGB.
+    pub albedo: Vec3,
+    /// Reflection blur strength in `[0, 1]`. Constructor clamps inputs
+    /// to that range.
+    pub fuzz: f32,
+}
 
 impl Metal {
+    /// Construct a metallic surface. `fuzz` is clamped to `[0, 1]`.
     pub fn new(albedo: Vec3, fuzz: f32) -> Self {
         Self { albedo, fuzz: fuzz.clamp(0.0, 1.0) }
     }
@@ -99,9 +131,19 @@ impl Material for Metal {
 // handles the time gating when binning the contribution.
 // ---------------------------------------------------------------------------
 
-pub struct DiffuseLight { pub intensity: Vec3 }
+/// Emissive surface — the pulse source for transient rendering. The
+/// emitter absorbs incoming rays (`scatter` returns `None`) and
+/// contributes its `intensity` whenever a path terminates here. Time
+/// gating against the pulse profile happens in
+/// [`crate::transient::trace_path`], not on the material.
+pub struct DiffuseLight {
+    /// Peak emitted radiance in linear RGB. Magnitudes can exceed 1.0
+    /// — they're scaled by the temporal pulse profile when binned.
+    pub intensity: Vec3,
+}
 
 impl DiffuseLight {
+    /// Construct an emitter at the given peak intensity.
     pub fn new(intensity: Vec3) -> Self { Self { intensity } }
 }
 

@@ -25,10 +25,20 @@
 //! combinations whose total path-length horizon would exceed `3 · T_1`
 //! for the bounded scene.
 //!
+//! ```
+//! use lux_aurumque::{SpectralBudget, transient::C};
+//!
+//! // 0.95 m room → T_1 ≈ 6.34 ns; admit up to 3·T_1 ≈ 19.0 ns.
+//! let budget = SpectralBudget::for_scene_diameter(0.95, C as f64);
+//! assert!(budget.admits(15e-9));
+//! assert!(!budget.admits(25e-9));
+//! ```
+//!
 //! See `NOTES_PROCESS.md` in the repository for the process-philosophical
 //! framing — Whitehead's ontology mapped onto the renderer's data flow.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![warn(missing_docs)]
 
 pub mod camera;
 pub mod hit;

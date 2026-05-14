@@ -7,9 +7,15 @@
 
 use crate::vec3::Vec3;
 
+/// A ray with cumulative optical path length. The path length is what
+/// makes this a *transient* ray rather than a steady-state one — it
+/// carries enough state for the time-binned framebuffer to credit each
+/// terminal hit to the correct time bin.
 #[derive(Clone, Copy, Debug)]
 pub struct Ray {
+    /// World-space origin.
     pub origin: Vec3,
+    /// Unit direction. The constructor normalises whatever it's given.
     pub dir: Vec3,
     /// Optical path length already traveled BEFORE this ray segment starts.
     /// In vacuum this equals geometric distance; in a medium of refractive
@@ -18,6 +24,8 @@ pub struct Ray {
 }
 
 impl Ray {
+    /// Construct a ray. `dir` is normalised internally; callers may
+    /// pass non-unit vectors.
     #[inline]
     pub fn new(origin: Vec3, dir: Vec3, path_length: f32) -> Self {
         Self { origin, dir: dir.normalize(), path_length }

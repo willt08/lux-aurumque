@@ -12,13 +12,21 @@ use crate::material::Material;
 use crate::ray::Ray;
 use crate::vec3::Vec3;
 
+/// Analytic sphere primitive. The scene's only primitive type — walls
+/// are large spheres flattened at the camera's scale, which keeps the
+/// intersection routine tight and the code compact.
 pub struct Sphere {
+    /// World-space centre.
     pub center: Vec3,
+    /// Radius in metres.
     pub radius: f32,
+    /// Shared material. `Arc` so many spheres can reuse one material
+    /// (cream walls, gold sphere, etc.).
     pub material: Arc<dyn Material>,
 }
 
 impl Sphere {
+    /// Construct a sphere with the given centre, radius, and material.
     pub fn new(center: Vec3, radius: f32, material: Arc<dyn Material>) -> Self {
         Self { center, radius, material }
     }

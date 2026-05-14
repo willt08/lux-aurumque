@@ -7,6 +7,9 @@ use crate::vec3::Vec3;
 
 use std::sync::Arc;
 
+/// Information returned by [`Hittable::hit`] when a ray strikes a
+/// surface: the world-space hit point, surface normal, parametric `t`,
+/// front/back flag, and the material to shade with.
 #[derive(Clone)]
 pub struct HitRecord {
     /// World-space hit point.
@@ -32,13 +35,23 @@ impl HitRecord {
     }
 }
 
+/// Abstract intersection target. Implemented by every scene primitive
+/// (sphere, plane, mesh, etc.) and by [`HittableList`] which composes
+/// them. `Send + Sync` because tile rendering hits objects from worker
+/// threads.
 pub trait Hittable: Send + Sync {
-    /// Return a hit record if the ray strikes this object within (t_min, t_max).
+    /// Return a hit record if the ray strikes this object within
+    /// `(t_min, t_max)`. `None` if the ray misses or the closest hit is
+    /// outside the bounds — those bounds let callers (e.g.
+    /// [`HittableList`]) tighten the search interval after each hit.
     fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord>;
 }
 
-/// A list of hittables that returns the closest hit.
+/// A list of hittables that returns the closest hit. The world's root
+/// container.
 pub struct HittableList {
+    /// Owned scene primitives. Each entry is `Arc` so primitives can
+    /// share materials and be addressed from multiple lists cheaply.
     pub objects: Vec<Arc<dyn Hittable>>,
 }
 
@@ -47,7 +60,9 @@ impl Default for HittableList {
 }
 
 impl HittableList {
+    /// Construct an empty list.
     pub fn new() -> Self { Self { objects: Vec::new() } }
+    /// Add a primitive to the list.
     pub fn push(&mut self, obj: Arc<dyn Hittable>) { self.objects.push(obj); }
 }
 
